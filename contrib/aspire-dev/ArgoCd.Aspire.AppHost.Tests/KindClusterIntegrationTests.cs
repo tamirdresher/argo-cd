@@ -45,7 +45,7 @@ public class KindClusterIntegrationTests
 
             var overlayDir = Path.Combine(repoRoot, "contrib", "aspire-dev", "ArgoCd.Aspire.AppHost", "manifests", "argocd-namespaced");
             var generated = Path.Combine(Path.GetTempPath(), "argocd-aspire-kind-tests", "install-integration.yaml");
-            ArgoCdManifestRenderer.RenderNamespacedInstallManifest(overlayDir, generated);
+            await ArgoCdManifestRenderer.RenderNamespacedInstallManifestAsync(overlayDir, generated);
 
             await RunOrThrow("kubectl", $"--kubeconfig \"{kubeconfig}\" apply -f \"{Path.Combine(repoRoot, "contrib", "aspire-dev", "ArgoCd.Aspire.AppHost", "manifests", "namespace.yaml")}\"", repoRoot);
 

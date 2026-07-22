@@ -2,10 +2,11 @@
 
 The C# source files in this directory (`KindClusterResource.cs`,
 `KindClusterBuilderExtensions.cs`, `KindClusterLifecycleHook.cs`) are **vendored,
-unpublished** source, copied verbatim (no modifications) from a private,
-unpublished Aspire hosting integration for [Kind](https://kind.sigs.k8s.io/)
-authored by the same contributor who added this `contrib/aspire-dev`
-environment to the Argo CD repository.
+unpublished** source, originally copied verbatim from a private, unpublished Aspire
+hosting integration for [Kind](https://kind.sigs.k8s.io/) authored by the same
+contributor who added this `contrib/aspire-dev` environment to the Argo CD repository.
+A small number of XML doc-comment corrections have since been applied on top of the
+original copy — see "Modifications made when vendoring" below.
 
 ## Why vendored instead of a NuGet package reference
 
@@ -26,7 +27,7 @@ directly into this repository.
 | Origin | Private, internal-only sample repository (not publicly hosted; not affiliated with or reviewed by CommunityToolkit/Aspire) |
 | Commit copied from | `f066472f288989f06b226bd61fc492be8a7229ad` |
 | Files copied | `src/CommunityToolkit.Aspire.Hosting.Kind/KindClusterResource.cs`, `KindClusterBuilderExtensions.cs`, `KindClusterLifecycleHook.cs` |
-| Modifications made when vendoring | None — the three `.cs` files are byte-for-byte copies. Only the `.csproj` (this project's own build file, not part of the vendored source) and this NOTICE were authored fresh for this repository. |
+| Modifications made when vendoring | The three `.cs` files were initially byte-for-byte copies. Since then, the `RepoUrl` XML doc comments on `KindClusterBuilderExtensions.WithHelmChart` and the `KindHelmChart` record in `KindClusterResource.cs` were corrected to describe the actual implementation in `KindClusterLifecycleHook.cs` (`helm repo add ... --force-update` followed by a repo-qualified `helm install`, not `helm install --repo <url>`). No executable logic was changed. The `.csproj` (this project's own build file, not part of the vendored source) and this NOTICE were authored fresh for this repository. |
 
 ## License
 
@@ -44,17 +45,16 @@ Only the following public API, exactly as present in the copied commit, is used 
 `ArgoCd.Aspire.AppHost`:
 
 - `AddKindCluster(name)`
-- `WithConfig(path)`
-- `WithDockerImage(image, contextPath, dockerfilePath?)`
 - `WithManifest(path)`
 - `WithDashboardProperty(name, value)`
 - `WithWaitForReady(timeout)`
 
 APIs that do **not** exist in the copied commit (e.g. `WithWorkerNodes`,
 `WithClusterLifetime`) are intentionally **not** used anywhere in this contribution.
-`WithNodeCount`, `WithKubernetesVersion`, `WithHelmChart`, and `WithPortMapping` exist
-in the copied source but are not currently used by the Argo CD AppHost; they remain
-available for future use (e.g. Helm-based scenarios) without further vendoring work.
+`WithConfig`, `WithDockerImage`, `WithNodeCount`, `WithKubernetesVersion`,
+`WithHelmChart`, and `WithPortMapping` exist in the copied source but are not
+currently used by the Argo CD AppHost; they remain available for future use (e.g.
+Helm-based scenarios) without further vendoring work.
 
 ## Maintenance
 

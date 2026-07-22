@@ -21,6 +21,7 @@
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdRepoRoot.cs" Link="AppHost\ArgoCdRepoRoot.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdManifestRenderer.cs" Link="AppHost\ArgoCdManifestRenderer.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\RepoServerOverride.cs" Link="AppHost\RepoServerOverride.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\DeleteClusterCommand.cs" Link="AppHost\DeleteClusterCommand.cs" />
   </ItemGroup>
 
   <ItemGroup>

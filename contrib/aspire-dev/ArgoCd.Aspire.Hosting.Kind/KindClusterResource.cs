@@ -172,8 +172,10 @@ public record struct KindPortMapping(int HostPort, int ContainerPort, string Pro
 /// <param name="Namespace">The Kubernetes namespace for the Helm release. Defaults to <c>default</c>.</param>
 /// <param name="ValuesFile">Optional absolute path to a Helm values override file (<c>-f values.yaml</c>).</param>
 /// <param name="RepoUrl">
-/// Optional Helm chart repository URL. When set, passed as <c>--repo &lt;url&gt;</c> to
-/// <c>helm install</c> so that <c>helm repo add</c> is not required.
+/// Optional Helm chart repository URL. When set, the repository is first registered via
+/// <c>helm repo add &lt;alias&gt; &lt;url&gt; --force-update</c> (release-scoped alias),
+/// and the repo-qualified chart reference is then used with a plain <c>helm install</c> —
+/// no <c>--repo</c> flag is passed to <c>helm install</c>.
 /// </param>
 /// <param name="SetValues">
 /// Optional list of <c>key=value</c> overrides passed as <c>--set key=value</c> to

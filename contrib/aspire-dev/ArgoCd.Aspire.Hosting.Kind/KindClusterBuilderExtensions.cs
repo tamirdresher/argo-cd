@@ -540,8 +540,10 @@ public static class KindClusterBuilderExtensions
     /// </param>
     /// <param name="valuesFile">Optional path to a Helm values override file.</param>
     /// <param name="repoUrl">
-    /// Optional chart repository URL. When set, passed as <c>--repo &lt;url&gt;</c> to
-    /// <c>helm install</c> — no prior <c>helm repo add</c> is required.
+    /// Optional chart repository URL. When set, the repository is registered first via
+    /// <c>helm repo add &lt;alias&gt; &lt;url&gt; --force-update</c> (using a release-scoped
+    /// alias), and the resulting repo-qualified chart reference (e.g. <c>alias/chart</c>) is
+    /// then passed to a plain <c>helm install</c> — no <c>--repo</c> flag is used.
     /// </param>
     /// <param name="setValues">
     /// Optional <c>key=value</c> overrides passed as <c>--set</c> to <c>helm install</c>.

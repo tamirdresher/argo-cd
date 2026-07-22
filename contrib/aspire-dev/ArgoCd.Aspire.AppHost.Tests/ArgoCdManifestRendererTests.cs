@@ -15,7 +15,7 @@ public class ArgoCdManifestRendererTests
     private static bool KubectlAvailable => TryRun("kubectl", "version --client");
 
     [Fact]
-    public void RenderNamespacedInstallManifest_ProducesNamespacedResources()
+    public async Task RenderNamespacedInstallManifest_ProducesNamespacedResources()
     {
         if (!KubectlAvailable)
         {
@@ -30,7 +30,7 @@ public class ArgoCdManifestRendererTests
 
         try
         {
-            var result = ArgoCdManifestRenderer.RenderNamespacedInstallManifest(overlayDir, outputPath);
+            var result = await ArgoCdManifestRenderer.RenderNamespacedInstallManifestAsync(overlayDir, outputPath);
 
             Assert.True(File.Exists(result));
             var content = File.ReadAllText(result);

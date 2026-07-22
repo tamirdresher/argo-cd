@@ -52,4 +52,24 @@ public class RepoServerImageTagTests
 
         Assert.NotEqual(first, second);
     }
+
+    [Fact]
+    public void BuildLdFlags_EmbedsFullShaVerbatim_NotShortSha()
+    {
+        const string fullSha = "7ca0120abcdef1234567890abcdef1234567890";
+
+        var ldflags = RepoServerOverrideCommands.BuildLdFlags(fullSha, dirty: false);
+
+        Assert.Contains($"common.gitCommit={fullSha}", ldflags, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildLdFlags_EmbedsGitTreeState_MatchingDirtyFlag()
+    {
+        var cleanFlags = RepoServerOverrideCommands.BuildLdFlags("deadbeef", dirty: false);
+        var dirtyFlags = RepoServerOverrideCommands.BuildLdFlags("deadbeef", dirty: true);
+
+        Assert.Contains("common.gitTreeState=clean", cleanFlags, StringComparison.Ordinal);
+        Assert.Contains("common.gitTreeState=dirty", dirtyFlags, StringComparison.Ordinal);
+    }
 }

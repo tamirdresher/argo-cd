@@ -6,7 +6,8 @@ namespace ArgoCd.Aspire.AppHost;
 
 /// <summary>
 /// Adds a "Delete Kind cluster (clean shutdown)" dashboard command that synchronously runs
-/// <c>kind delete cluster</c>.
+/// <c>kind delete cluster</c> and best-effort deletes the generated kubeconfig file, matching
+/// the vendored integration's own <c>BeforeStopAsync</c> cleanup.
 ///
 /// Why this exists: the vendored Kind integration's <c>BeforeStopAsync</c> lifecycle hook
 /// *does* delete the cluster, but on this Aspire CLI/host combination `aspire stop` was
@@ -32,19 +33,36 @@ public static class DeleteClusterCommand
             executeCommand: async _ =>
             {
                 var clusterName = builder.Resource.ClusterName;
+                var kubeconfigPath = builder.Resource.KubeconfigPath;
                 var (exitCode, stdout, stderr) = await RunAsync("kind", ["delete", "cluster", "--name", clusterName]);
+
+                // Best-effort kubeconfig cleanup — mirrors the vendored integration's own
+                // BeforeStopAsync cleanup (KindClusterLifecycleHook.DeleteClusterAsync). Attempted
+                // regardless of the `kind delete cluster` exit code so a stale kubeconfig doesn't
+                // linger even if the cluster itself was already gone.
+                var kubeconfigCleanupWarning = TryDeleteKubeconfig(kubeconfigPath);
 
                 if (exitCode != 0)
                 {
+                    var failureText = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                    if (kubeconfigCleanupWarning is not null)
+                    {
+                        failureText = $"{failureText}\n{kubeconfigCleanupWarning}";
+                    }
+
                     return CommandResults.Failure(
                         $"kind delete cluster --name {clusterName} failed.",
-                        string.IsNullOrWhiteSpace(stderr) ? stdout : stderr,
+                        failureText,
                         CommandResultFormat.Text);
                 }
 
+                var successText = kubeconfigCleanupWarning is null
+                    ? stdout
+                    : $"{stdout}\n{kubeconfigCleanupWarning}";
+
                 return CommandResults.Success(
                     $"Kind cluster '{clusterName}' deleted.",
-                    stdout,
+                    successText,
                     CommandResultFormat.Text,
                     true);
             },
@@ -58,6 +76,30 @@ public static class DeleteClusterCommand
             });
 
         return builder;
+    }
+
+    /// <summary>
+    /// Best-effort deletes the kubeconfig file at <paramref name="kubeconfigPath"/>. Returns
+    /// <see langword="null"/> on success (or if the file didn't exist), or a human-readable
+    /// warning message if deletion failed. Never throws. Extracted as a pure, testable helper
+    /// (no process I/O) so this cleanup behavior can be unit tested without kubectl/Docker.
+    /// </summary>
+    internal static string? TryDeleteKubeconfig(string kubeconfigPath)
+    {
+        if (!File.Exists(kubeconfigPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            File.Delete(kubeconfigPath);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"Could not delete kubeconfig '{kubeconfigPath}': {ex.Message}";
+        }
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(

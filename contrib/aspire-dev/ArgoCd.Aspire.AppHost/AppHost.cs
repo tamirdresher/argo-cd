@@ -40,7 +40,7 @@ var generatedManifestPath = Path.Combine(Path.GetTempPath(), "argocd-aspire-kind
 
 // Client-side render only (kubectl kustomize) — no live cluster or Docker required at this
 // point. Regenerated on every AppHost start so local edits to manifests/ are always reflected.
-ArgoCdManifestRenderer.RenderNamespacedInstallManifest(namespacedOverlayDir, generatedManifestPath);
+await ArgoCdManifestRenderer.RenderNamespacedInstallManifestAsync(namespacedOverlayDir, generatedManifestPath);
 
 const string ClusterName = "argocd-dev";
 
@@ -61,7 +61,7 @@ cluster.WithDashboardProperty(
 cluster.WithDashboardProperty(
     "argocd.initialAdminPassword",
     $"kubectl --kubeconfig \"{cluster.Resource.KubeconfigPath}\" -n argocd get secret argocd-initial-admin-secret " +
-    "-o jsonpath=\"{.data.password}\" | base64 -d");
+    "-o jsonpath=\"{.data.password}\" | % { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }");
 
 // Deliverable #5: one-click repo-server source override (build -> load -> patch -> restart -> verify).
 cluster.WithRepoServerOverrideCommand(repoRoot);

@@ -90,6 +90,12 @@ public static class RepoServerOverrideCommands
             var (commitExit, commitStdout, _) = await RunAsync("git", ["rev-parse", "--short", "HEAD"], repoRoot);
             var shortCommit = commitExit == 0 ? commitStdout.Trim() : "unknown";
 
+            // The Makefile's GIT_COMMIT (embedded as common.gitCommit) is always the *full*
+            // 40-char SHA (`git rev-parse HEAD`), not the short one used for the image tag —
+            // fetch it separately rather than assuming --short always yields exactly 7 chars.
+            var (fullCommitExit, fullCommitStdout, _) = await RunAsync("git", ["rev-parse", "HEAD"], repoRoot);
+            var fullCommit = fullCommitExit == 0 ? fullCommitStdout.Trim() : shortCommit;
+
             var (statusExit, statusStdout, _) = await RunAsync("git", ["status", "--porcelain"], repoRoot);
             var dirty = statusExit != 0 || !string.IsNullOrWhiteSpace(statusStdout);
 
@@ -100,6 +106,7 @@ public static class RepoServerOverrideCommands
             Directory.CreateDirectory(buildDir);
 
             log.AppendLine($"Image reference: {imageRef}");
+            log.AppendLine($"common.gitCommit ldflag will embed full SHA: {fullCommit}");
 
             // 1. Base image (helm/kustomize/git-lfs/tini/etc). Cheap when cached.
             log.AppendLine("Step 1/5: docker build --target argocd-base (reused from Dockerfile) ...");
@@ -117,7 +124,7 @@ public static class RepoServerOverrideCommands
             //    go build invocation to the Makefile's `image:` target (DEV_IMAGE branch).
             log.AppendLine("Step 2/5: go build (cross-compiled linux/amd64, same ldflags as Makefile) ...");
             var binaryPath = Path.Combine(buildDir, "argocd");
-            var ldflags = BuildLdFlags(shortCommit, dirty);
+            var ldflags = BuildLdFlags(fullCommit, dirty);
             var goExit = await RunStreamedAsync(
                 "go",
                 ["build", "-v", "-ldflags", ldflags, "-gcflags=all=-N -l", "-o", binaryPath, "./cmd"],
@@ -219,7 +226,7 @@ public static class RepoServerOverrideCommands
         }
     }
 
-    private static string BuildLdFlags(string gitCommit, bool dirty)
+    internal static string BuildLdFlags(string gitCommit, bool dirty)
     {
         const string package = "github.com/argoproj/argo-cd/v3/common";
         var treeState = dirty ? "dirty" : "clean";
