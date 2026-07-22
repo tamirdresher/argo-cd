@@ -1,0 +1,33 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.4.6">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>argocd-aspire-kind-dev</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArgoCd.Aspire.Hosting.Kind\ArgoCd.Aspire.Hosting.Kind.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+  <!--
+    Exclude the sibling test project from this AppHost's compile glob. The
+    Aspire.AppHost.Sdk defaults to **/*.cs; without this exclusion it would try
+    to compile the xunit-dependent test files as part of the AppHost itself.
+  -->
+  <ItemGroup>
+    <Compile Remove="..\ArgoCd.Aspire.AppHost.Tests\**\*.cs" />
+  </ItemGroup>
+
+  <!--
+    Manifests and kustomize overlays are read directly from the source tree at AppHost
+    startup (via ArgoCdRepoRoot), not copied to the output directory — see AppHost.cs for why.
+    Still marked as None (not Compile) so they show up in the AppHost project in an IDE.
+  -->
+  <ItemGroup>
+    <None Include="manifests\**\*" />
+  </ItemGroup>
+
+</Project>

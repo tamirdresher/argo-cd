@@ -1,0 +1,9 @@
+# Creates the `argocd` namespace used by the baseline Argo CD install manifest.
+# Applied first (registration order) so the namespaced install manifest below has
+# somewhere to land.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd

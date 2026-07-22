@@ -1,0 +1,29 @@
+# Thin kustomize overlay that stamps `namespace: argocd` onto the upstream
+# Argo CD install manifest, so `kubectl apply -f <generated>` (no `-n` flag)
+# lands every resource in the `argocd` namespace.
+#
+# This intentionally reuses the repository's own manifests/namespace-install
+# package (which itself is manifests/base without cluster RBAC) rather than
+# re-declaring any Argo CD resources here. It is rendered once by
+# `kubectl kustomize` at AppHost startup (see AppHost.cs) into
+# .generated/argocd-install.yaml (git-ignored, not committed) and applied via
+# the vendored Kind integration's WithManifest(...).
+#
+# manifests/crds is intentionally EXCLUDED here: the Application/ApplicationSet
+# CRDs' embedded OpenAPI schemas exceed kubectl's 262144-byte
+# last-applied-configuration annotation limit under plain client-side
+# `kubectl apply`, which is exactly why the project's own docs
+# (docs/developer-guide/running-locally.md) apply install.yaml with
+# `--server-side --force-conflicts`. The vendored Kind integration's
+# WithManifest(...) always does a plain client-side apply (no flag to opt into
+# server-side), so CRDs are applied separately via CrdBootstrap.cs, which does
+# `kubectl apply --server-side --force-conflicts -f manifests/crds` directly
+# against the repository's own manifests/crds directory (unmodified, no copy).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+
+resources:
+- ../../../../../manifests/namespace-install
+- ../../../../../manifests/cluster-rbac
