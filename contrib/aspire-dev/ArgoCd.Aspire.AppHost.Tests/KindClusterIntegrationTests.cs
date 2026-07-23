@@ -5,116 +5,117 @@ using Xunit;
 namespace ArgoCd.Aspire.AppHostTests;
 
 /// <summary>
-/// Opt-in, serial integration test that exercises the real Kind cluster + baseline Argo CD
-/// install + repo-server override flow end to end. Requires Docker, kind, kubectl, helm, and
-/// go on PATH, and takes several minutes.
+/// Opt-in, live-cluster integration test validating the "Kind holds state only" invariant of the
+/// v2 Aspire dev loop: the manifests this AppHost applies to Kind (CRDs, namespace, ConfigMaps,
+/// Secrets, RBAC) never create any Deployment or Pod, because every Argo CD component runs as a
+/// native host-process Aspire resource instead.
 ///
-/// Disabled by default. Enable explicitly with:
-///
-///   $env:ARGOCD_ASPIRE_KIND_INTEGRATION = "1"
-///   dotnet test contrib/aspire-dev/ArgoCd.Aspire.AppHost.Tests
-///
-/// Not run as part of `make test` / `make test-local` — this is intentionally outside the
-/// Go test suite and is only discovered by `dotnet test` inside contrib/aspire-dev.
+/// Disabled by default because it requires a working Docker daemon, <c>kind</c>, and
+/// <c>kubectl</c> on PATH, and takes roughly a minute to create/destroy a real cluster. Set
+/// <c>ARGOCD_ASPIRE_KIND_INTEGRATION=1</c> to opt in locally or in CI. Not part of the default
+/// <c>dotnet test</c>/<c>make test</c> loop.
 /// </summary>
-[Collection("KindIntegration")] // serial: only one Kind cluster of this name at a time
-public class KindClusterIntegrationTests
+[Collection("KindIntegration")]
+public sealed class KindClusterIntegrationTests
 {
-    private static bool IntegrationEnabled =>
-        Environment.GetEnvironmentVariable("ARGOCD_ASPIRE_KIND_INTEGRATION") == "1";
+    private const string ClusterName = "argocd-dev-test";
 
     [Fact]
-    public async Task Cluster_CanBeCreatedAndDeleted_WithBaselineArgoCdManifests()
+    public async Task Cluster_HoldsStateOnly_NoWorkloadsCreated()
     {
-        if (!IntegrationEnabled)
+        if (Environment.GetEnvironmentVariable("ARGOCD_ASPIRE_KIND_INTEGRATION") != "1")
         {
-            return; // Opt-in only; see class remarks.
+            // Skipped by default: requires Docker + kind + kubectl and takes ~1 minute.
+            return;
         }
 
-        var repoRoot = FindRepoRootFromTestBinary();
-        const string clusterName = "argocd-dev-test";
-
-        await RunOrThrow("kind", $"delete cluster --name {clusterName}", repoRoot, allowFailure: true);
+        var repoRoot = ArgoCdRepoRoot.Resolve(AppContext.BaseDirectory);
+        var kubeconfigPath = Path.Combine(Path.GetTempPath(), $"argocd-aspire-test-kubeconfig-{Guid.NewGuid():N}.yaml");
 
         try
         {
-            var kubeconfig = Path.Combine(Path.GetTempPath(), $"kind-{clusterName}-kubeconfig-test.yaml");
-            await RunOrThrow("kind", $"create cluster --name {clusterName} --kubeconfig \"{kubeconfig}\"", repoRoot);
+            // Best-effort cleanup of any leftover cluster from a prior aborted run.
+            await Run("kind", $"delete cluster --name {ClusterName}");
 
-            await RunOrThrow("kubectl", $"--kubeconfig \"{kubeconfig}\" get nodes", repoRoot);
+            await RunOrThrow("kind", $"create cluster --name {ClusterName} --kubeconfig \"{kubeconfigPath}\"");
 
-            var overlayDir = Path.Combine(repoRoot, "contrib", "aspire-dev", "ArgoCd.Aspire.AppHost", "manifests", "argocd-namespaced");
-            var generated = Path.Combine(Path.GetTempPath(), "argocd-aspire-kind-tests", "install-integration.yaml");
-            await ArgoCdManifestRenderer.RenderNamespacedInstallManifestAsync(overlayDir, generated);
+            await RunOrThrow("kubectl", $"create namespace argocd --kubeconfig \"{kubeconfigPath}\"");
 
-            await RunOrThrow("kubectl", $"--kubeconfig \"{kubeconfig}\" apply -f \"{Path.Combine(repoRoot, "contrib", "aspire-dev", "ArgoCd.Aspire.AppHost", "manifests", "namespace.yaml")}\"", repoRoot);
+            foreach (var relativePath in ArgoCdManifestSet.Crds)
+            {
+                var fullPath = Path.Combine(repoRoot, relativePath);
+                await RunOrThrow(
+                    "kubectl",
+                    $"apply --server-side --force-conflicts -f \"{fullPath}\" --kubeconfig \"{kubeconfigPath}\"");
+            }
 
-            // Server-side apply for CRDs — see CrdBootstrapHook.cs for why plain client-side
-            // apply fails on these specific CRDs (last-applied-configuration annotation limit).
-            var crdsPath = Path.Combine(repoRoot, "manifests", "crds");
-            await RunOrThrow("kubectl", $"--kubeconfig \"{kubeconfig}\" apply --server-side --force-conflicts -f \"{crdsPath}\"", repoRoot);
+            foreach (var relativePath in ArgoCdManifestSet.ConfigAndRbac)
+            {
+                var fullPath = Path.Combine(repoRoot, relativePath);
+                await RunOrThrow(
+                    "kubectl",
+                    $"apply --server-side --force-conflicts -n argocd -f \"{fullPath}\" --kubeconfig \"{kubeconfigPath}\"");
+            }
 
-            await RunOrThrow("kubectl", $"--kubeconfig \"{kubeconfig}\" apply -f \"{generated}\"", repoRoot);
+            var (_, namespaces, _) = await RunOrThrow("kubectl", $"get namespace argocd -o name --kubeconfig \"{kubeconfigPath}\"");
+            Assert.Contains("namespace/argocd", namespaces);
 
-            await RunOrThrow(
-                "kubectl",
-                $"--kubeconfig \"{kubeconfig}\" -n argocd rollout status deployment/argocd-repo-server --timeout=300s",
-                repoRoot);
+            var (_, crds, _) = await RunOrThrow("kubectl", $"get crd -o name --kubeconfig \"{kubeconfigPath}\"");
+            Assert.Contains("applications.argoproj.io", crds);
+            Assert.Contains("applicationsets.argoproj.io", crds);
+            Assert.Contains("appprojects.argoproj.io", crds);
 
-            var (exitCode, stdout, _) = await Run(
-                "kubectl", $"--kubeconfig \"{kubeconfig}\" -n argocd get pods -o wide", repoRoot);
-            Assert.Equal(0, exitCode);
-            Assert.Contains("argocd-repo-server", stdout, StringComparison.Ordinal);
+            var (_, configMaps, _) = await RunOrThrow("kubectl", $"get configmap argocd-cm -n argocd -o name --kubeconfig \"{kubeconfigPath}\"");
+            Assert.Contains("configmap/argocd-cm", configMaps);
+
+            // The state-only invariant: no Deployments and no Pods should ever exist in the
+            // argocd namespace, because this dev loop never applies workload manifests -- every
+            // Argo CD component is launched as a native host-process Aspire resource instead.
+            var (_, deployments, _) = await RunOrThrow("kubectl", $"get deployments -n argocd -o name --kubeconfig \"{kubeconfigPath}\"");
+            Assert.Empty(deployments.Trim());
+
+            var (_, pods, _) = await RunOrThrow("kubectl", $"get pods -n argocd -o name --kubeconfig \"{kubeconfigPath}\"");
+            Assert.Empty(pods.Trim());
         }
         finally
         {
-            await RunOrThrow("kind", $"delete cluster --name {clusterName}", repoRoot, allowFailure: true);
-        }
-    }
-
-    private static string FindRepoRootFromTestBinary()
-    {
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            if (ArgoCdRepoRoot.IsRepoRoot(dir.FullName))
+            await Run("kind", $"delete cluster --name {ClusterName}");
+            if (File.Exists(kubeconfigPath))
             {
-                return dir.FullName;
+                File.Delete(kubeconfigPath);
             }
         }
-
-        throw new DirectoryNotFoundException(
-            $"Could not locate the Argo CD repo root above '{AppContext.BaseDirectory}'.");
     }
 
-    private static async Task RunOrThrow(string fileName, string arguments, string workingDirectory, bool allowFailure = false)
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> Run(string fileName, string arguments)
     {
-        var (exitCode, stdout, stderr) = await Run(fileName, arguments, workingDirectory);
-        if (exitCode != 0 && !allowFailure)
+        var psi = new ProcessStartInfo(fileName, arguments)
         {
-            throw new InvalidOperationException(
-                $"'{fileName} {arguments}' failed (exit {exitCode}).\nstdout: {stdout}\nstderr: {stderr}");
-        }
-    }
-
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> Run(
-        string fileName, string arguments, string workingDirectory)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = arguments,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            UseShellExecute = false,
             CreateNoWindow = true,
         };
 
-        using var process = new Process { StartInfo = psi };
-        process.Start();
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start process '{fileName}'.");
+
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
+
         return (process.ExitCode, await stdoutTask, await stderrTask);
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunOrThrow(string fileName, string arguments)
+    {
+        var result = await Run(fileName, arguments);
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"'{fileName} {arguments}' exited with code {result.ExitCode}.\nstdout: {result.Stdout}\nstderr: {result.Stderr}");
+        }
+
+        return result;
     }
 }

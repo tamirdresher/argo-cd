@@ -3,74 +3,16 @@ using System.Diagnostics;
 namespace ArgoCd.Aspire.AppHost;
 
 /// <summary>
-/// Renders the namespaced baseline Argo CD install manifest by invoking <c>kubectl kustomize</c>
-/// against the <c>manifests/argocd-namespaced</c> overlay (see that directory's kustomization.yaml
-/// for why a thin overlay is used instead of re-declaring resources). Pure client-side YAML
-/// rendering — does not touch a live cluster and does not require Docker.
+/// Low-level process execution helper shared by the state-only bootstrap hook
+/// (<see cref="ArgoCdStateBootstrapHook"/>) and the optional in-cluster repo-server override
+/// command. Historically this class also rendered the full namespaced Argo CD install manifest
+/// via <c>kubectl kustomize</c> for deployment as workload Pods inside Kind; that mechanism has
+/// been removed now that all core components run as native host processes and Kind holds only
+/// state (CRDs/RBAC/ConfigMaps/Secrets) — see <c>ArgoCdManifestSet.cs</c> for the explicit file
+/// list that replaced it.
 /// </summary>
 public static class ArgoCdManifestRenderer
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
-
-    /// <summary>
-    /// Runs <c>kubectl kustomize &lt;overlayDirectory&gt;</c> and writes the rendered YAML to
-    /// <paramref name="outputPath"/>, creating parent directories as needed.
-    /// </summary>
-    /// <param name="overlayDirectory">Kustomize overlay directory to render.</param>
-    /// <param name="outputPath">File to write the rendered YAML to.</param>
-    /// <param name="timeout">
-    /// Maximum time to wait for <c>kubectl kustomize</c> to finish before the process (and any
-    /// children it spawned) is killed. Defaults to 30 seconds.
-    /// </param>
-    /// <param name="cancellationToken">Propagated cancellation; also kills the process tree.</param>
-    /// <returns><paramref name="outputPath"/>, for chaining.</returns>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when <c>kubectl</c> is missing, the kustomize render fails, or it times out.
-    /// </exception>
-    public static async Task<string> RenderNamespacedInstallManifestAsync(
-        string overlayDirectory,
-        string outputPath,
-        TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(overlayDirectory);
-        ArgumentException.ThrowIfNullOrEmpty(outputPath);
-
-        if (!Directory.Exists(overlayDirectory))
-        {
-            throw new DirectoryNotFoundException(
-                $"Kustomize overlay directory not found: '{overlayDirectory}'.");
-        }
-
-        var (exitCode, stdout, stderr) = await RunCaptureAsync(
-            "kubectl",
-            ["kustomize", overlayDirectory],
-            timeout ?? DefaultTimeout,
-            cancellationToken);
-
-        if (exitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"'kubectl kustomize {overlayDirectory}' failed (exit code {exitCode}). " +
-                "Ensure kubectl is installed and on PATH.\n" + stderr);
-        }
-
-        if (string.IsNullOrWhiteSpace(stdout))
-        {
-            throw new InvalidOperationException(
-                $"'kubectl kustomize {overlayDirectory}' produced no output.\n{stderr}");
-        }
-
-        var directory = Path.GetDirectoryName(outputPath);
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        await File.WriteAllTextAsync(outputPath, stdout, cancellationToken);
-        return outputPath;
-    }
-
     /// <summary>
     /// Runs a process to completion and captures stdout/stderr without risking the classic
     /// redirected-pipe deadlock: both streams are read asynchronously starting immediately after
@@ -83,7 +25,8 @@ public static class ArgoCdManifestRenderer
         string fileName,
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? workingDirectory = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -93,6 +36,11 @@ public static class ArgoCdManifestRenderer
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+
+        if (workingDirectory is not null)
+        {
+            psi.WorkingDirectory = workingDirectory;
+        }
 
         foreach (var arg in arguments)
         {

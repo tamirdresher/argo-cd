@@ -1,0 +1,96 @@
+namespace ArgoCd.Aspire.AppHost;
+
+/// <summary>
+/// Cross-platform equivalents of the <c>/tmp/argocd-local/...</c> and <c>/tmp/coverage/...</c>
+/// path defaults baked into the repository's <c>Procfile</c>. The Procfile assumes a POSIX shell
+/// and hard-codes <c>/tmp</c>, which does not exist on Windows. Every path here honors the exact
+/// same environment-variable override names used by the Procfile (so a developer's existing
+/// shell environment still works unmodified) and otherwise falls back to
+/// <see cref="Path.GetTempPath"/>-rooted locations that work identically on Windows, Linux, and
+/// macOS.
+/// </summary>
+/// <remarks>
+/// The one exception is <see cref="CmpPluginSocketPath"/>: the real Procfile default for
+/// <c>ARGOCD_PLUGINSOCKFILEPATH</c> is <c>./test/cmp</c>, a checked-in fixture directory
+/// (containing <c>plugin.yaml</c>) that lives in the repository tree, not under <c>/tmp</c>.
+/// That default is intentionally preserved as repo-root-relative rather than redirected to a
+/// temp directory.
+/// </remarks>
+public static class ArgoCdPaths
+{
+    /// <summary>
+    /// Root directory replacing the Procfile's hard-coded <c>/tmp/argocd-local</c> prefix.
+    /// </summary>
+    public static string LocalDataRoot { get; } =
+        Path.Combine(Path.GetTempPath(), "argocd-local");
+
+    /// <summary>
+    /// Root directory replacing the Procfile's hard-coded <c>/tmp/coverage</c> prefix.
+    /// </summary>
+    public static string CoverageRoot { get; } =
+        Path.Combine(Path.GetTempPath(), "argocd-coverage");
+
+    /// <summary>
+    /// Equivalent of <c>${ARGOCD_TLS_DATA_PATH:-/tmp/argocd-local/tls}</c>.
+    /// </summary>
+    public static string TlsDataPath { get; } =
+        Environment.GetEnvironmentVariable("ARGOCD_TLS_DATA_PATH")
+        ?? Path.Combine(LocalDataRoot, "tls");
+
+    /// <summary>
+    /// Equivalent of <c>${ARGOCD_SSH_DATA_PATH:-/tmp/argocd-local/ssh}</c>.
+    /// </summary>
+    public static string SshDataPath { get; } =
+        Environment.GetEnvironmentVariable("ARGOCD_SSH_DATA_PATH")
+        ?? Path.Combine(LocalDataRoot, "ssh");
+
+    /// <summary>
+    /// Equivalent of <c>${ARGOCD_GNUPGHOME:-/tmp/argocd-local/gpg/keys}</c> — the repo-server's
+    /// GnuPG keyring home directory.
+    /// </summary>
+    public static string GpgKeysPath { get; } =
+        Environment.GetEnvironmentVariable("ARGOCD_GNUPGHOME")
+        ?? Path.Combine(LocalDataRoot, "gpg", "keys");
+
+    /// <summary>
+    /// Equivalent of <c>${ARGOCD_GPG_DATA_PATH:-/tmp/argocd-local/gpg/source}</c> — the
+    /// dev-mounter-synced source of trusted GPG public keys (mirrors the
+    /// <c>argocd-gpg-keys-cm</c> ConfigMap).
+    /// </summary>
+    public static string GpgSourcePath { get; } =
+        Environment.GetEnvironmentVariable("ARGOCD_GPG_DATA_PATH")
+        ?? Path.Combine(LocalDataRoot, "gpg", "source");
+
+    /// <summary>
+    /// Repo-root-relative equivalent of <c>${ARGOCD_PLUGINSOCKFILEPATH:-./test/cmp}</c>, used by
+    /// both repo-server and (when opted in) cmp-server for the Config Management Plugin Unix
+    /// domain socket directory. Unlike the other paths on this type, this is a checked-in
+    /// fixture directory, not a temp default, so it is resolved against the repository root
+    /// rather than the OS temp directory.
+    /// </summary>
+    /// <param name="repoRoot">Absolute path to the Argo CD repository root.</param>
+    public static string CmpPluginSocketPath(string repoRoot) =>
+        Environment.GetEnvironmentVariable("ARGOCD_PLUGINSOCKFILEPATH")
+        ?? Path.Combine(repoRoot, "test", "cmp");
+
+    /// <summary>
+    /// Equivalent of <c>${ARGOCD_COVERAGE_DIR:-/tmp/coverage/&lt;component&gt;}</c>. Note that,
+    /// matching the Procfile's exact behavior, if the <c>ARGOCD_COVERAGE_DIR</c> environment
+    /// variable is set it is used verbatim for every component (not per-component) — this
+    /// mirrors the upstream Procfile precisely, quirk and all.
+    /// </summary>
+    /// <param name="component">
+    /// Component subdirectory name (e.g. <c>app-controller</c>, <c>api-server</c>, <c>repo-server</c>).
+    /// </param>
+    public static string CoverageDir(string component) =>
+        Environment.GetEnvironmentVariable("ARGOCD_COVERAGE_DIR")
+        ?? Path.Combine(CoverageRoot, component);
+
+    /// <summary>
+    /// Ensures the given directory exists, creating it (and any parents) if necessary. Safe to
+    /// call repeatedly; used to pre-create the local data directories before host-process
+    /// components start, since Go processes generally do not create deeply-nested directories on
+    /// first use.
+    /// </summary>
+    public static void EnsureDirectoryExists(string path) => Directory.CreateDirectory(path);
+}

@@ -76,7 +76,13 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
         await Task.WhenAll(clusters.Select(c => WaitForReadyThenPostDeployAsync(c, cancellationToken)));
     }
 
-    /// <summary>Deletes all Kind clusters and removes kubeconfig files before the application stops.</summary>
+    /// <summary>
+    /// Deletes non-persistent Kind clusters and removes their kubeconfig files before the
+    /// application stops. Clusters marked <see cref="KindClusterResource.Persistent"/> are left
+    /// running so the inner dev loop can be restarted without re-creating the cluster and
+    /// re-applying CRDs/RBAC/ConfigMaps every time; use the explicit "Delete Kind Cluster"
+    /// dashboard command (see <c>DeleteClusterCommand</c>) to tear those down deliberately.
+    /// </summary>
     public async Task BeforeStopAsync(
         DistributedApplicationModel appModel,
         CancellationToken cancellationToken = default)
@@ -84,9 +90,29 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
         var clusters = appModel.Resources.OfType<KindClusterResource>().ToList();
         if (clusters.Count == 0) return;
 
-        _logger.LogInformation("Deleting {Count} Kind cluster(s)...", clusters.Count);
+        var persistentClusters = clusters.Where(c => c.Persistent).ToList();
+        var ephemeralClusters = clusters.Where(c => !c.Persistent).ToList();
 
-        foreach (var cluster in clusters)
+        foreach (var cluster in persistentClusters)
+        {
+            _logger.LogInformation(
+                "Kind cluster '{ClusterName}' is persistent; leaving it running across AppHost stop. " +
+                "Use the 'Delete Kind Cluster' dashboard command to tear it down explicitly.",
+                cluster.ClusterName);
+
+            await PublishClusterStateAsync(
+                cluster,
+                StateFinished,
+                KnownResourceStateStyles.Info,
+                cancellationToken,
+                message: "AppHost stopped; persistent Kind cluster left running");
+        }
+
+        if (ephemeralClusters.Count == 0) return;
+
+        _logger.LogInformation("Deleting {Count} Kind cluster(s)...", ephemeralClusters.Count);
+
+        foreach (var cluster in ephemeralClusters)
         {
             await PublishClusterStateAsync(
                 cluster,
@@ -97,9 +123,9 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
         }
 
         // Best-effort parallel deletion — don't let one failure block others.
-        await Task.WhenAll(clusters.Select(c => DeleteClusterAsync(c, cancellationToken)));
+        await Task.WhenAll(ephemeralClusters.Select(c => DeleteClusterAsync(c, cancellationToken)));
 
-        foreach (var cluster in clusters)
+        foreach (var cluster in ephemeralClusters)
         {
             await PublishClusterStateAsync(
                 cluster,
@@ -114,6 +140,14 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
 
     private async Task CreateClusterAsync(KindClusterResource cluster, CancellationToken cancellationToken)
     {
+        if (cluster.Persistent && await TryReuseExistingClusterAsync(cluster, cancellationToken))
+        {
+            // A healthy cluster from a previous run was found and its kubeconfig re-exported;
+            // skip `kind create cluster` (and the CRD/RBAC/ConfigMap re-apply that follows it in
+            // AfterResourcesCreatedAsync still runs — bootstrap manifests are safely idempotent).
+            return;
+        }
+
         _logger.LogInformation("Creating Kind cluster '{ClusterName}' → kubeconfig: {KubeconfigPath}",
             cluster.ClusterName, cluster.KubeconfigPath);
 
@@ -181,6 +215,61 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
                 catch { /* not critical */ }
             }
         }
+    }
+
+    /// <summary>
+    /// Attempts to reuse an already-running Kind cluster for a <see cref="KindClusterResource"/>
+    /// marked <see cref="KindClusterResource.Persistent"/>. Re-exports the kubeconfig (the temp
+    /// kubeconfig path is per-AppHost-run, so it must be refreshed even when the underlying Kind
+    /// cluster is still alive from a previous run) and verifies the cluster actually responds
+    /// before declaring it reusable.
+    /// </summary>
+    /// <returns><see langword="true"/> if an existing, healthy cluster was found and reused.</returns>
+    private async Task<bool> TryReuseExistingClusterAsync(
+        KindClusterResource cluster,
+        CancellationToken cancellationToken)
+    {
+        var (exportExitCode, _, exportStderr) = await RunCommandAsync(
+            "kind",
+            ["export", "kubeconfig", "--name", cluster.ClusterName, "--kubeconfig", cluster.KubeconfigPath],
+            cancellationToken);
+
+        if (exportExitCode != 0)
+        {
+            _logger.LogDebug(
+                "No existing Kind cluster named '{ClusterName}' to reuse (kind export kubeconfig exit {ExitCode}): {Stderr}",
+                cluster.ClusterName,
+                exportExitCode,
+                exportStderr);
+            return false;
+        }
+
+        var (healthExitCode, _, healthStderr) = await RunCommandAsync(
+            "kubectl",
+            ["get", "nodes", "--kubeconfig", cluster.KubeconfigPath, "--request-timeout", "5s"],
+            cancellationToken);
+
+        if (healthExitCode != 0)
+        {
+            _logger.LogWarning(
+                "Existing Kind cluster '{ClusterName}' did not respond to 'kubectl get nodes' and will be recreated: {Stderr}",
+                cluster.ClusterName,
+                healthStderr);
+            return false;
+        }
+
+        _logger.LogInformation(
+            "Reusing existing persistent Kind cluster '{ClusterName}'.",
+            cluster.ClusterName);
+
+        await PublishClusterStateAsync(
+            cluster,
+            StateStarting,
+            KnownResourceStateStyles.Info,
+            cancellationToken,
+            message: "Reusing existing persistent Kind cluster");
+
+        return true;
     }
 
     private async Task DeleteStaleClusterIfExistsAsync(

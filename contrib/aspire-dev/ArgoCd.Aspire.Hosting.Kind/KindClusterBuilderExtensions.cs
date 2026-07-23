@@ -500,6 +500,50 @@ public static class KindClusterBuilderExtensions
     }
 
     /// <summary>
+    /// Marks the Kind cluster as persistent/reusable across AppHost runs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// By default (<paramref name="persistent"/> not called, or called with <c>false</c>),
+    /// every AppHost start deletes any pre-existing cluster with the same name and creates a
+    /// fresh one, and every AppHost stop deletes the cluster again. That mirrors "ephemeral
+    /// CI-style" usage but is wasteful for the inner dev loop, where recreating the cluster
+    /// (and re-applying CRDs/RBAC/ConfigMaps) on every F5/Ctrl+F5 costs tens of seconds and
+    /// discards the previous run's state.
+    /// </para>
+    /// <para>
+    /// When <paramref name="persistent"/> is <c>true</c>, the lifecycle hook will:
+    /// <list type="bullet">
+    /// <item>On start: if a healthy same-named cluster already exists, reuse it (skip delete +
+    /// re-create) and only refresh the kubeconfig file via <c>kind export kubeconfig</c>. If no
+    /// cluster exists, or the existing one fails a health check, it still falls back to
+    /// creating a fresh one.</item>
+    /// <item>On stop: leave the cluster running. Use the explicit "Delete Kind Cluster" dashboard
+    /// command to tear it down deliberately.</item>
+    /// </list>
+    /// This avoids a race where AppHost's own stop-time deletion of the cluster can be observed
+    /// mid-teardown by a subsequent quick restart, and lets host-process components keep talking
+    /// to the same control plane (and therefore the same in-cluster state) across restarts.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The resource builder.</param>
+    /// <param name="persistent">
+    /// <c>true</c> to keep the cluster alive across AppHost stop/start cycles and reuse an
+    /// existing healthy cluster instead of recreating it; <c>false</c> to restore the default
+    /// delete-then-recreate/delete-on-stop behavior.
+    /// </param>
+    /// <returns>The same builder for fluent chaining.</returns>
+    public static IResourceBuilder<KindClusterResource> WithPersistentCluster(
+        this IResourceBuilder<KindClusterResource> builder,
+        bool persistent = true)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        builder.Resource.Persistent = persistent;
+        return builder;
+    }
+
+    /// <summary>
     /// Adds a host-to-container port mapping on the Kind control-plane node.
     /// </summary>
     /// <param name="builder">The resource builder.</param>

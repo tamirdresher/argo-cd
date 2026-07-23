@@ -12,6 +12,11 @@
     <ProjectReference Include="..\ArgoCd.Aspire.Hosting.Kind\ArgoCd.Aspire.Hosting.Kind.csproj" IsAspireProjectResource="false" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="13.4.6" />
+  </ItemGroup>
+
   <!--
     Exclude the sibling test project from this AppHost's compile glob. The
     Aspire.AppHost.Sdk defaults to **/*.cs; without this exclusion it would try
@@ -19,15 +24,6 @@
   -->
   <ItemGroup>
     <Compile Remove="..\ArgoCd.Aspire.AppHost.Tests\**\*.cs" />
-  </ItemGroup>
-
-  <!--
-    Manifests and kustomize overlays are read directly from the source tree at AppHost
-    startup (via ArgoCdRepoRoot), not copied to the output directory — see AppHost.cs for why.
-    Still marked as None (not Compile) so they show up in the AppHost project in an IDE.
-  -->
-  <ItemGroup>
-    <None Include="manifests\**\*" />
   </ItemGroup>
 
 </Project>

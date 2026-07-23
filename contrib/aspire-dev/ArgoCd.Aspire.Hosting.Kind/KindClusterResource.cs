@@ -70,6 +70,25 @@ public sealed class KindClusterResource : Resource, IResourceWithConnectionStrin
     public TimeSpan ReadyTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// Gets or sets whether this cluster should be reused across AppHost runs instead of being
+    /// deleted and recreated every time. Defaults to <see langword="false"/> to preserve the
+    /// original, fully-deterministic-recreate behavior for existing consumers of this generic
+    /// Kind hosting integration.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="true"/>: if <c>kind get clusters</c> already reports a cluster named
+    /// <see cref="ClusterName"/> and it responds successfully to <c>kubectl get nodes</c>, it is
+    /// reused as-is (kubeconfig is (re-)exported, but nothing is deleted or recreated). The
+    /// cluster is also left running on AppHost stop instead of being deleted — use an explicit
+    /// teardown command (see <c>DeleteClusterCommand</c> in the Argo CD AppHost) to remove it.
+    /// This trades "always starts from a byte-identical empty cluster" for "avoids the
+    /// multi-minute create-cluster cost on every inner-loop iteration," which matters far more
+    /// once the cluster only holds state (CRDs/RBAC/ConfigMaps) and Argo CD's own components run
+    /// as host processes outside it.
+    /// </remarks>
+    public bool Persistent { get; set; }
+
+    /// <summary>
     /// Gets the list of host-to-container port mappings configured on the control-plane node.
     /// </summary>
     public IReadOnlyList<KindPortMapping> PortMappings => _portMappings;

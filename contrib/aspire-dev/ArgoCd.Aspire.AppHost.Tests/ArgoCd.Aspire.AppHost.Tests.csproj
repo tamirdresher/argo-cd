@@ -22,6 +22,14 @@
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdManifestRenderer.cs" Link="AppHost\ArgoCdManifestRenderer.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\RepoServerOverride.cs" Link="AppHost\RepoServerOverride.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\DeleteClusterCommand.cs" Link="AppHost\DeleteClusterCommand.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdPaths.cs" Link="AppHost\ArgoCdPaths.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdPrerequisites.cs" Link="AppHost\ArgoCdPrerequisites.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdManifestSet.cs" Link="AppHost\ArgoCdManifestSet.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdComponents.cs" Link="AppHost\ArgoCdComponents.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdStateBootstrapHook.cs" Link="AppHost\ArgoCdStateBootstrapHook.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdSelectiveRestartHook.cs" Link="AppHost\ArgoCdSelectiveRestartHook.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\AdminCredentialCommand.cs" Link="AppHost\AdminCredentialCommand.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdUiDependencies.cs" Link="AppHost\ArgoCdUiDependencies.cs" />
   </ItemGroup>
 
   <ItemGroup>
