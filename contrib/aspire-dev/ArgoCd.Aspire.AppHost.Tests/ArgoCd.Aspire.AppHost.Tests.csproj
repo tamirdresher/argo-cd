@@ -27,13 +27,17 @@
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdManifestSet.cs" Link="AppHost\ArgoCdManifestSet.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdComponents.cs" Link="AppHost\ArgoCdComponents.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdStateBootstrapHook.cs" Link="AppHost\ArgoCdStateBootstrapHook.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdBootstrapState.cs" Link="AppHost\ArgoCdBootstrapState.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdSelectiveRestartHook.cs" Link="AppHost\ArgoCdSelectiveRestartHook.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\AdminCredentialCommand.cs" Link="AppHost\AdminCredentialCommand.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdUiDependencies.cs" Link="AppHost\ArgoCdUiDependencies.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdClusterName.cs" Link="AppHost\ArgoCdClusterName.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdDex.cs" Link="AppHost\ArgoCdDex.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="13.4.6" />
   </ItemGroup>
 
   <ItemGroup>

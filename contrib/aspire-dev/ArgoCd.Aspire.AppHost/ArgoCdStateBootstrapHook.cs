@@ -48,6 +48,7 @@ namespace ArgoCd.Aspire.AppHost;
 public sealed class ArgoCdStateBootstrapHook(
     ILogger<ArgoCdStateBootstrapHook> logger,
     ResourceNotificationService notifications,
+    ArgoCdBootstrapState bootstrapState,
     bool enableDex = false)
     : IDistributedApplicationLifecycleHook
 {
@@ -81,6 +82,7 @@ public sealed class ArgoCdStateBootstrapHook(
 
         if (cluster is null)
         {
+            bootstrapState.MarkCompleted(succeeded: false);
             return;
         }
 
@@ -88,6 +90,7 @@ public sealed class ArgoCdStateBootstrapHook(
         if (repoRoot is null)
         {
             logger.LogWarning("Could not locate the repository root from '{BaseDirectory}'; skipping state bootstrap.", AppContext.BaseDirectory);
+            bootstrapState.MarkCompleted(succeeded: false);
             return;
         }
 
@@ -131,6 +134,14 @@ public sealed class ArgoCdStateBootstrapHook(
                     allSucceeded ? "Applied (server-side)" : "FAILED — see component logs"),
             ],
         });
+
+        // Signals ArgoCdBootstrapState so the "argocd-state-bootstrap" health check (registered in
+        // AppHost.cs and associated with the Kind cluster resource via WithHealthCheck) only reports
+        // Healthy once this bootstrap has actually finished applying every manifest group
+        // successfully. Consumers that must not run against a cluster missing the argocd-cm/
+        // argocd-secret ConfigMap/Secret (for example the gendexcfg step in the Dex flow) call
+        // WaitFor(cluster) to gate on this.
+        bootstrapState.MarkCompleted(allSucceeded);
     }
 
     /// <summary>

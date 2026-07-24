@@ -62,11 +62,33 @@ public sealed class ArgoCdComponentsTests
     private static List<EndpointAnnotation> GetEndpoints(IResourceBuilder<ExecutableResource> resourceBuilder) =>
         resourceBuilder.Resource.Annotations.OfType<EndpointAnnotation>().ToList();
 
+    /// <summary>
+    /// Like <see cref="GetEnvironmentAsync"/>, but returns the raw (unstringified) values placed
+    /// into the environment dictionary by callback annotations. This is required to verify
+    /// <c>REDIS_PASSWORD</c> wiring, since <c>WithEnvironment(string, IResourceBuilder&lt;ParameterResource&gt;)</c>
+    /// stores the live <see cref="ParameterResource"/> reference (for lazy resolution at run/publish
+    /// time) rather than a materialized string — stringifying it here would defeat the purpose of
+    /// proving the *same* parameter instance backs both the Redis resource and the component.
+    /// </summary>
+    private static async Task<Dictionary<string, object?>> GetRawEnvironmentAsync(IResourceBuilder<ExecutableResource> resourceBuilder)
+    {
+        var executionContext = new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run);
+        var env = new Dictionary<string, object>();
+        foreach (var annotation in resourceBuilder.Resource.Annotations.OfType<EnvironmentCallbackAnnotation>())
+        {
+            var context = new EnvironmentCallbackContext(executionContext, resourceBuilder.Resource, env, CancellationToken.None);
+            await annotation.Callback(context);
+        }
+
+        return env.ToDictionary(kv => kv.Key, kv => (object?)kv.Value);
+    }
+
     [Fact]
     public async Task ApplicationController_MatchesProcfileCommandAndFlags()
     {
         using var builder = NewBuilderDisposable();
-        var resource = builder.Builder.AddArgoCdApplicationController(FakeRepoRoot);
+        var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+        var resource = builder.Builder.AddArgoCdApplicationController(FakeRepoRoot, redis);
 
         Assert.Equal("application-controller", resource.Resource.Name);
         Assert.Equal("go", resource.Resource.Command);
@@ -101,7 +123,8 @@ public sealed class ArgoCdComponentsTests
     public async Task ApiServer_MatchesProcfileCommandFlagsAndPort()
     {
         using var builder = NewBuilderDisposable();
-        var resource = builder.Builder.AddArgoCdApiServer(FakeRepoRoot);
+        var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+        var resource = builder.Builder.AddArgoCdApiServer(FakeRepoRoot, redis);
 
         Assert.Equal("api-server", resource.Resource.Name);
         Assert.Equal("go", resource.Resource.Command);
@@ -137,7 +160,8 @@ public sealed class ArgoCdComponentsTests
     public async Task RepoServer_MatchesProcfileCommandFlagsPortAndGpgPaths()
     {
         using var builder = NewBuilderDisposable();
-        var resource = builder.Builder.AddArgoCdRepoServer(FakeRepoRoot);
+        var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+        var resource = builder.Builder.AddArgoCdRepoServer(FakeRepoRoot, redis);
 
         Assert.Equal("repo-server", resource.Resource.Name);
 
@@ -286,7 +310,8 @@ public sealed class ArgoCdComponentsTests
             Environment.SetEnvironmentVariable("ARGOCD_OTLP_ADDRESS", null);
             using (var builder = NewBuilderDisposable())
             {
-                var resource = builder.Builder.AddArgoCdApiServer(FakeRepoRoot);
+                var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+                var resource = builder.Builder.AddArgoCdApiServer(FakeRepoRoot, redis);
                 var args = await GetArgsAsync(resource);
                 Assert.DoesNotContain("--otlp-address", args);
             }
@@ -294,7 +319,8 @@ public sealed class ArgoCdComponentsTests
             Environment.SetEnvironmentVariable("ARGOCD_OTLP_ADDRESS", "localhost:4317");
             using (var builder = NewBuilderDisposable())
             {
-                var resource = builder.Builder.AddArgoCdApiServer(FakeRepoRoot);
+                var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+                var resource = builder.Builder.AddArgoCdApiServer(FakeRepoRoot, redis);
                 var args = await GetArgsAsync(resource);
                 Assert.Contains("--otlp-address", args);
                 var index = args.IndexOf("--otlp-address");
@@ -304,6 +330,65 @@ public sealed class ArgoCdComponentsTests
         finally
         {
             Environment.SetEnvironmentVariable("ARGOCD_OTLP_ADDRESS", previous);
+        }
+    }
+
+    /// <summary>
+    /// Proves the fix for the CRITICAL "Redis auth mismatch" finding: when the Redis resource is
+    /// configured with a generated password (Aspire's own default — <c>AddRedis</c> without
+    /// <c>.WithPassword(null)</c>), every component that talks to Redis receives that *exact same*
+    /// <see cref="ParameterResource"/> instance via the <c>REDIS_PASSWORD</c> environment variable
+    /// (the only mechanism <c>util/cache/cache.go</c> recognizes — <c>--redis</c> is host:port only
+    /// and never carries credentials). This guarantees the resource and the components can never
+    /// drift out of sync, unlike the previous no-op wiring that produced NOAUTH at runtime.
+    /// </summary>
+    [Fact]
+    public async Task RedisCredentials_AreConsistentAcrossComponents_WhenRedisHasGeneratedPassword()
+    {
+        using var builder = NewBuilderDisposable();
+        var redis = builder.Builder.AddRedis("redis");
+        Assert.NotNull(redis.Resource.PasswordParameter);
+
+        var apiServer = builder.Builder.AddArgoCdApiServer(FakeRepoRoot, redis);
+        var repoServer = builder.Builder.AddArgoCdRepoServer(FakeRepoRoot, redis);
+        var applicationController = builder.Builder.AddArgoCdApplicationController(FakeRepoRoot, redis);
+
+        foreach (var resource in new[] { apiServer, repoServer, applicationController })
+        {
+            var rawEnv = await GetRawEnvironmentAsync(resource);
+            Assert.True(rawEnv.TryGetValue("REDIS_PASSWORD", out var value), $"{resource.Resource.Name} is missing REDIS_PASSWORD");
+            Assert.Same(redis.Resource.PasswordParameter, value);
+
+            // The --redis flag itself must remain host:port only; credentials must never leak into argv.
+            var args = await GetArgsAsync(resource);
+            var redisFlagIndex = args.IndexOf("--redis");
+            Assert.True(redisFlagIndex >= 0, $"{resource.Resource.Name} is missing the --redis flag");
+            Assert.Equal("localhost:6379", args[redisFlagIndex + 1]);
+        }
+    }
+
+    /// <summary>
+    /// Complements <see cref="RedisCredentials_AreConsistentAcrossComponents_WhenRedisHasGeneratedPassword"/>:
+    /// when Redis is explicitly configured password-less (the canonical local-dev default this repo
+    /// ships in <c>AppHost.cs</c>, matching the Procfile's own security posture), no component should
+    /// receive a <c>REDIS_PASSWORD</c> environment variable — there is no credential to thread, and
+    /// asserting its absence guards against a future regression that fabricates one.
+    /// </summary>
+    [Fact]
+    public async Task RedisCredentials_AreOmittedAcrossComponents_WhenRedisIsExplicitlyPasswordless()
+    {
+        using var builder = NewBuilderDisposable();
+        var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+        Assert.Null(redis.Resource.PasswordParameter);
+
+        var apiServer = builder.Builder.AddArgoCdApiServer(FakeRepoRoot, redis);
+        var repoServer = builder.Builder.AddArgoCdRepoServer(FakeRepoRoot, redis);
+        var applicationController = builder.Builder.AddArgoCdApplicationController(FakeRepoRoot, redis);
+
+        foreach (var resource in new[] { apiServer, repoServer, applicationController })
+        {
+            var env = await GetEnvironmentAsync(resource);
+            Assert.False(env.ContainsKey("REDIS_PASSWORD"), $"{resource.Resource.Name} unexpectedly has REDIS_PASSWORD set for a password-less Redis resource");
         }
     }
 

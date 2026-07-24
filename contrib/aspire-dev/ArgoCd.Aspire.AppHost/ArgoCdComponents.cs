@@ -35,7 +35,7 @@ internal static class ArgoCdComponents
     /// Application controller (Procfile: <c>controller</c>). Source: <c>controller/</c>.
     /// </summary>
     public static IResourceBuilder<ExecutableResource> AddArgoCdApplicationController(
-        this IDistributedApplicationBuilder builder, string repoRoot)
+        this IDistributedApplicationBuilder builder, string repoRoot, IResourceBuilder<RedisResource> redis)
     {
         const string component = "app-controller";
         var args = new List<string>
@@ -61,14 +61,15 @@ internal static class ArgoCdComponents
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-application-controller")
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
-            .WithEnvironment("HOSTNAME", "testappcontroller-1");
+            .WithEnvironment("HOSTNAME", "testappcontroller-1")
+            .WithRedisPassword(builder, redis);
     }
 
     /// <summary>
     /// API server (Procfile: <c>api-server</c>). Source: <c>server/</c>.
     /// </summary>
     public static IResourceBuilder<ExecutableResource> AddArgoCdApiServer(
-        this IDistributedApplicationBuilder builder, string repoRoot)
+        this IDistributedApplicationBuilder builder, string repoRoot, IResourceBuilder<RedisResource> redis)
     {
         const string component = "api-server";
         var args = new List<string>
@@ -96,14 +97,15 @@ internal static class ArgoCdComponents
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-server")
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
-            .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "http", isProxied: false);
+            .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "http", isProxied: false)
+            .WithRedisPassword(builder, redis);
     }
 
     /// <summary>
     /// Repo server (Procfile: <c>repo-server</c>). Source: <c>reposerver/</c>.
     /// </summary>
     public static IResourceBuilder<ExecutableResource> AddArgoCdRepoServer(
-        this IDistributedApplicationBuilder builder, string repoRoot)
+        this IDistributedApplicationBuilder builder, string repoRoot, IResourceBuilder<RedisResource> redis)
     {
         const string component = "repo-server";
         var args = new List<string>
@@ -133,7 +135,8 @@ internal static class ArgoCdComponents
             .WithEnvironment("ARGOCD_GPG_ENABLED", Environment.GetEnvironmentVariable("ARGOCD_GPG_ENABLED") is { Length: > 0 } gpgEnabled ? gpgEnabled : "false")
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
-            .WithHttpEndpoint(port: 8081, targetPort: 8081, name: "http", isProxied: false);
+            .WithHttpEndpoint(port: 8081, targetPort: 8081, name: "http", isProxied: false)
+            .WithRedisPassword(builder, redis);
 
         // Optional passthrough matching the Procfile's `export GIT_CONFIG_GLOBAL=$ARGOCD_GIT_CONFIG`
         // behavior — only wired when the developer has opted in via ARGOCD_GIT_CONFIG.
@@ -297,5 +300,26 @@ internal static class ArgoCdComponents
             args.Add(flagName);
             args.Add(value);
         }
+    }
+
+    /// <summary>
+    /// Threads the Redis resource's generated credential (if any) into a component as the
+    /// <c>REDIS_PASSWORD</c> environment variable — the only authentication mechanism Argo CD's
+    /// Redis client recognizes (see <c>util/cache/cache.go</c>; there is no <c>--redis-password</c>
+    /// CLI flag). When the Redis resource has no password configured (the canonical local,
+    /// password-less development default configured in <c>AppHost.cs</c>), this is a no-op,
+    /// matching the Procfile's own password-less local default.
+    /// </summary>
+    private static IResourceBuilder<ExecutableResource> WithRedisPassword(
+        this IResourceBuilder<ExecutableResource> resource,
+        IDistributedApplicationBuilder builder,
+        IResourceBuilder<RedisResource> redis)
+    {
+        if (redis.Resource.PasswordParameter is { } password)
+        {
+            resource = resource.WithEnvironment("REDIS_PASSWORD", builder.CreateResourceBuilder(password));
+        }
+
+        return resource;
     }
 }

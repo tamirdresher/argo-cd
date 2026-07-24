@@ -33,16 +33,20 @@ missing, before it tries to start anything.
 Running the AppHost creates the following Aspire resource graph:
 
 ```
-argocd-dev (Kind cluster, state only)
+argocd-dev (Kind cluster, state only — real kind cluster/kubeconfig name is derived per checkout,
+            see "The Kind cluster name is derived per-checkout" below; the "argocd-dev" resource
+            name is fixed)
   └─ bootstraps CRDs / argocd namespace / RBAC / ConfigMaps / Secrets (server-side apply)
-redis                                    (Aspire-managed container, port 6379)
+redis                                    (Aspire-managed container, port 6379, no password — see
+                                          "Redis: local-only, no password" below)
 repo-server        (host process)  ──▶ waits: redis
 commit-server       (host process)
 api-server          (host process)  ──▶ waits: redis, repo-server
 application-controller (host process) ──▶ waits: redis, repo-server, commit-server
 applicationset-controller (host process) ──▶ waits: repo-server
 notifications-controller (host process)
-dex                 (container, opt-in) ──▶ ARGOCD_ASPIRE_ENABLE_DEX=true
+gendexcfg           (run-to-completion, opt-in) ──▶ ARGOCD_ASPIRE_ENABLE_DEX=true; waits: cluster state
+dex                 (container, opt-in) ──▶ ARGOCD_ASPIRE_ENABLE_DEX=true; waits: gendexcfg completion
 cmp-server          (host process, opt-in, Windows unsupported) ──▶ ARGOCD_ASPIRE_ENABLE_CMP=true
 dev-mounter         (host process)  ──▶ waits: argocd-dev cluster
 ui                  (host process, pnpm) ──▶ waits: api-server; ARGOCD_API_URL wired to api-server
@@ -64,7 +68,13 @@ while actually running on your machine.
 | `notifications-controller`     | `./cmd/argocd-notification`           | `--argocd-repo-server localhost:8081`                                     | 9001 metrics |
 | `commit-server`                | `./cmd/argocd-commitserver`           | (none — matches Procfile)                                                 | 8086 |
 | `cmp-server` *(opt-in)*        | `./cmd/argocd-cmp-server`             | plugin socket at `ARGOCD_PLUGINSOCKFILEPATH` (see below)                  | n/a (Unix socket) |
-| `dex` *(opt-in)*               | container `ghcr.io/dexidp/dex:v2.45.1`| —                                                                          | 5556 |
+| `gendexcfg` *(opt-in, run-to-completion)* | `./cmd/main.go gendexcfg` | `-o <generated-config-path> --kubeconfig <cluster kubeconfig> -n argocd`  | n/a |
+| `dex` *(opt-in)*               | container `ghcr.io/dexidp/dex:v2.45.1`| entrypoint `dex`, args `serve <generated-config-path>` (bind-mounted read-only from `gendexcfg`'s output) | 5556 |
+
+`api-server`, `repo-server`, and `application-controller` also receive a `REDIS_PASSWORD`
+environment variable whenever the `redis` resource has a password configured — see
+[Redis: local-only, no password](#redis-local-only-no-password) below for why the default dev
+loop leaves it unset, and how that credential is threaded through when it isn't.
 
 Every process is launched from the resolved repository root (see [`ArgoCdRepoRoot`](ArgoCd.Aspire.AppHost/ArgoCdRepoRoot.cs),
 which walks upward from the AppHost's own build output looking for a directory containing both
@@ -74,6 +84,34 @@ tree — editing a `.go` file and letting it rebuild is the entire "inner loop."
 `redis` is an Aspire-managed container bound to a fixed host port (`6379`), matching the
 Procfile's hard-coded `--redis localhost:6379` (Argo CD does not support dynamic Redis discovery
 in this dev configuration).
+
+### Redis: local-only, no password
+
+By default the `redis` resource is started **without a password**
+(`.WithPassword(null)` in [`AppHost.cs`](ArgoCd.Aspire.AppHost/AppHost.cs)), even though
+Aspire's `AddRedis` normally auto-generates and enforces one. This is a deliberate, explicit choice
+for this dev loop, not an oversight:
+
+- The `redis` container's port (`6379`) is bound only to `localhost` on your own machine, exactly
+  like the Procfile-driven `hack/goreman-start.sh` loop it replaces — nothing upstream of Argo CD's
+  own components ever needs to reach it, and nothing outside your machine can.
+- Argo CD's real Redis auth mechanism is the `REDIS_PASSWORD` environment variable (see
+  `util/cache/cache.go`); there is **no** `--redis-password` CLI flag. The `--redis` flag upstream
+  components use is `host:port` only and never carries credentials.
+- If Aspire's default password enforcement were left on, every component would need
+  `REDIS_PASSWORD` threaded in for `NOAUTH` errors not to occur. [`ArgoCdComponents.cs`](ArgoCd.Aspire.AppHost/ArgoCdComponents.cs)
+  implements exactly that threading (`WithRedisPassword`, applied to `api-server`, `repo-server`,
+  and `application-controller` — the only components that talk to Redis) so that if you re-enable a
+  password on the `redis` resource (or point `AppHost.cs` at a non-local, shared, or
+  password-protected Redis instance), every consuming component automatically receives the correct
+  credential — you do not need to edit each component individually.
+- **Security boundary:** password-less Redis is only safe because this loop is single-user,
+  localhost-only, and ephemeral. If you adapt this AppHost to point at a Redis instance that is
+  shared, remote, or reachable by anything other than your own local components, you must supply a
+  password (e.g. `builder.AddRedis("redis").WithPassword(...)` or point at an externally-managed
+  Redis with `AddConnectionString`) — the credential threading in `ArgoCdComponents.cs` will pick it
+  up automatically and every component will authenticate correctly. Do not reuse a shared/remote
+  Redis instance without a password.
 
 ### Dex and CMP are opt-in
 
@@ -94,9 +132,34 @@ does not support in the way `net.Listen("unix", ...)` requires. Setting
 exactly why, instead of silently starting a broken resource. On macOS/Linux, CMP starts normally
 and listens on that socket path.
 
+**Dex is modeled as two resources so SSO actually works, matching the Procfile's `dex:` line
+exactly** (see [`ArgoCdDex.cs`](ArgoCd.Aspire.AppHost/ArgoCdDex.cs)):
+
+1. `gendexcfg` — a run-to-completion executable resource equivalent to the Procfile's
+   `ARGOCD_BINARY_NAME=argocd-dex go run github.com/argoproj/argo-cd/v3/cmd gendexcfg -o
+   <path>/dex.yaml`: it runs `go run ./cmd/main.go gendexcfg -o <dexConfigPath> --kubeconfig
+   <cluster kubeconfig> -n argocd` with `ARGOCD_BINARY_NAME=argocd-dex` set (so `cmd/main.go`
+   dispatches into `cmd/argocd-dex/commands/argocd_dex.go`'s `gendexcfg` subcommand), and
+   `WaitFor`s the Kind cluster's `argocd-state-bootstrap` health check so it never races the
+   CRDs/RBAC that `ArgoCdStateBootstrapHook` applies. Unlike the Procfile (which relies on an
+   ambient `kubectl` context), `--kubeconfig` is passed explicitly, because each worktree/clone
+   here gets its own Kind cluster and kubeconfig (see [Kind holds state
+   only](#kind-holds-state-only)) rather than sharing one ambient context.
+2. `dex` — the published `ghcr.io/dexidp/dex:v2.45.1` container image, entrypoint `dex`, args
+   `serve /dex.yaml`, with the file `gendexcfg` just generated on the host bind-mounted read-only
+   into the container at `/dex.yaml` — the exact same in-container path the Procfile's
+   `` -v `pwd`/dist/dex.yaml:/dex.yaml `` bind mount uses. `dex` uses `WaitForCompletion(gendexcfg)`
+   (not `WaitFor`), so the container is guaranteed not to start until `gendexcfg` has exited
+   successfully and the mounted file exists and is current. Dex listens on `http://localhost:5556`.
+
+Both resources are only added to the app model when `ARGOCD_ASPIRE_ENABLE_DEX=true`; when it's
+unset, neither resource exists and no Dex-related ports, processes, or files are touched.
+
 ## Kind holds state only
 
-The `argocd-dev` Kind cluster is provisioned once and **kept between runs**
+`argocd-dev` is the fixed *Aspire resource* name (what you see in the dashboard and pass to `aspire
+resource ... delete-cluster`) — it is **not** the underlying `kind` cluster name. The actual `kind`
+cluster (and its kubeconfig) is provisioned once and **kept between runs**
 (`WithPersistentCluster()` — Aspire will reuse an existing cluster with a matching name instead of
 deleting and recreating it, avoiding a slow teardown/recreate cycle on every `dotnet run`). On
 first start (or whenever the cluster is missing), the AppHost:
@@ -110,8 +173,37 @@ first start (or whenever the cluster is missing), the AppHost:
 No Argo CD Deployment, StatefulSet, Service, or Pod is ever created for `api-server`,
 `repo-server`, the controllers, `commit-server`, `redis`, or the UI — those all run as Aspire
 resources on the host. The cluster's dashboard properties (`argocd.repoRoot`, `argocd.namespace`,
-`argocd.note`) make this explicit in the Aspire dashboard so it's obvious at a glance that the
-cluster is state-only.
+`argocd.clusterName`, `argocd.note`) make this explicit in the Aspire dashboard so it's obvious at
+a glance that the cluster is state-only, and `argocd.clusterName` tells you the real `kind` cluster
+name to use with `kind get clusters` / `kind delete cluster --name <that value>` if you ever need
+to bypass the dashboard command.
+
+### The Kind cluster name is derived per-checkout, not a shared literal
+
+Earlier revisions of this dev loop used the literal Kind cluster name `argocd-dev` (and a
+kubeconfig at a fixed path under `%TEMP%`) for every checkout. That collides the moment you have
+more than one clone or worktree of this repo on the same machine — a second checkout would attach
+to (and potentially bootstrap-race or delete) the first checkout's cluster. To fix this,
+[`ArgoCdClusterName.Resolve`](ArgoCd.Aspire.AppHost/ArgoCdClusterName.cs) derives the real `kind`
+cluster name from the resolved repo root:
+
+- **Default (no override):** `argocd-dev-<hash>`, where `<hash>` is the first 12 hex characters
+  (48 bits) of the SHA-256 digest of the repo root's normalized absolute path (case-insensitive on
+  Windows). This is **stable** for repeated runs from the same checkout (same path → same name
+  every time) and **distinct** across different checkouts/worktrees (different path → different
+  name), all without any state file to keep in sync. The kubeconfig Aspire generates for the
+  cluster is keyed off this same resolved name, so it no longer collides in `%TEMP%` either.
+- **Explicit override:** set `ARGOCD_ASPIRE_CLUSTER_NAME` to reuse one cluster across multiple
+  checkouts/worktrees on purpose (for example, sharing a single Kind cluster between two worktrees
+  you know won't run concurrently). The override is validated with the same RFC 1123 DNS label
+  rules Kubernetes/Kind enforce on cluster names — lowercase alphanumerics and hyphens only,
+  starting with an alphanumeric (`^[a-z0-9][a-z0-9-]*$`), 63 characters max — and `Resolve` throws
+  an `ArgumentException` naming the exact rule violated (empty/whitespace, too long, or invalid
+  characters) rather than silently passing a bad name through to `kind create cluster`.
+- **Discovering the resolved name:** the running AppHost always publishes the resolved name as the
+  `argocd.clusterName` dashboard property on the `argocd-dev` resource, so you never have to
+  recompute the hash by hand — check the dashboard, or run `kind get clusters` and look for the
+  `argocd-dev-`-prefixed (or your override) entry.
 
 ## Editing code triggers a selective restart
 
@@ -185,8 +277,12 @@ command on the `argocd-dev` resource (or `aspire resource argocd-dev delete-clus
 > — before that asynchronous `kind delete cluster` (which takes several seconds) can finish. Aspire
 > resource **commands**, unlike process shutdown, are awaited to completion by the CLI/dashboard,
 > so running `delete-cluster` explicitly avoids that race and reliably deletes the cluster and its
-> kubeconfig file. If you forget and just stop the AppHost, run
-> `kind delete cluster --name argocd-dev` by hand afterwards.
+> kubeconfig file. If you forget and just stop the AppHost, first find the real `kind` cluster name
+> — it is **not** the literal `argocd-dev` (see
+> [The Kind cluster name is derived per-checkout](#the-kind-cluster-name-is-derived-per-checkout-not-a-shared-literal)) —
+> via the `argocd.clusterName` dashboard property, `kind get clusters` (look for the
+> `argocd-dev-`-prefixed entry, or your `ARGOCD_ASPIRE_CLUSTER_NAME` override value), and then run
+> `kind delete cluster --name <that value>` by hand.
 
 Host processes (all Argo CD components, Redis, dev-mounter, UI) are regular child processes of the
 AppHost and terminate deterministically when the AppHost exits — there is no async teardown race
@@ -230,7 +326,10 @@ build, RBAC, resource limits, sidecar interactions, etc.) rather than as a host 
 
 1. Cross-compile `repo-server` for Linux and `docker build` a throwaway image tagged from your
    current git state.
-2. `kind load docker-image` that image into the `argocd-dev` cluster.
+2. `kind load docker-image` that image into the real `kind` cluster (looked up via
+   `cluster.ClusterName` — see [The Kind cluster name is derived
+   per-checkout](#the-kind-cluster-name-is-derived-per-checkout-not-a-shared-literal) — not the
+   literal `argocd-dev`).
 3. `kubectl patch`/roll out an in-cluster `repo-server` Deployment using that image, then tail its
    logs.
 

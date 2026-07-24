@@ -27,6 +27,7 @@ using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Lifecycle;
 using ArgoCd.Aspire.AppHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 
 // Fail fast with actionable remediation text before creating any resources: Docker, kind,
@@ -56,25 +57,51 @@ ArgoCdPaths.EnsureDirectoryExists(ArgoCdPaths.GpgSourcePath);
 // Kind cluster — state only. No Argo CD workload manifests are ever applied here; see
 // ArgoCdStateBootstrapHook (registered below) for the exact CRD/RBAC/ConfigMap/Secret set that
 // is applied via `kubectl apply --server-side --force-conflicts`. WithPersistentCluster reuses an
-// existing healthy "argocd-dev" cluster across AppHost restarts and leaves it running on normal
-// stop, avoiding the create/delete race a from-scratch cluster would hit on every inner-loop
-// iteration; use the "Delete Kind Cluster" dashboard command for deterministic teardown.
+// existing healthy cluster across AppHost restarts and leaves it running on normal stop, avoiding
+// the create/delete race a from-scratch cluster would hit on every inner-loop iteration; use the
+// "Delete Kind Cluster" dashboard command for deterministic teardown.
+//
+// The underlying `kind` cluster name (and, transitively, its generated kubeconfig path — see
+// AddKindCluster) is *not* the hard-coded literal "argocd-dev" used below as the Aspire *resource*
+// name. It is derived per-checkout by ArgoCdClusterName so that two worktrees/clones of this
+// repository on the same machine never collide on one shared cluster/kubeconfig; set
+// ARGOCD_ASPIRE_CLUSTER_NAME to override it (e.g. to deliberately share one cluster across
+// checkouts). See ArgoCdClusterName for the exact derivation and validation rules.
 // ---------------------------------------------------------------------------------------------
+var kindClusterName = ArgoCdClusterName.Resolve(repoRoot);
+
 var cluster = builder
-    .AddKindCluster("argocd-dev")
+    .AddKindCluster("argocd-dev", clusterName: kindClusterName)
     .WithPersistentCluster()
     .WithWaitForReady(TimeSpan.FromMinutes(10))
+    .WithHealthCheck(ArgoCdBootstrapState.HealthCheckKey)
     .WithDashboardProperty("argocd.repoRoot", repoRoot)
     .WithDashboardProperty("argocd.namespace", "argocd")
+    .WithDashboardProperty("argocd.clusterName", kindClusterName)
     .WithDashboardProperty(
         "argocd.note",
         "State only: CRDs/RBAC/ConfigMaps/Secrets. Every Argo CD component runs as a native " +
         "host-process resource in this Aspire app graph, not as a Kubernetes workload.");
 
+// Shared, thread-safe signal that lets the "argocd-state-bootstrap" health check (below) report
+// unhealthy until ArgoCdStateBootstrapHook has actually finished applying the state-only manifest
+// set — and unhealthy (not just "pending") if that apply failed. gendexcfg (added later, only
+// when Dex is enabled) waits on this health check so it never races the cluster's CRDs/RBAC.
+var bootstrapState = new ArgoCdBootstrapState();
+builder.Services.AddSingleton(bootstrapState);
+builder.Services
+    .AddHealthChecks()
+    .AddCheck(ArgoCdBootstrapState.HealthCheckKey, () => bootstrapState.Succeeded
+        ? HealthCheckResult.Healthy()
+        : bootstrapState.Completed
+            ? HealthCheckResult.Unhealthy("Argo CD state-only manifest bootstrap failed.")
+            : HealthCheckResult.Unhealthy("Argo CD state-only manifest bootstrap has not completed yet."));
+
 builder.Services.AddSingleton<IDistributedApplicationLifecycleHook>(sp =>
     new ArgoCdStateBootstrapHook(
         sp.GetRequiredService<ILogger<ArgoCdStateBootstrapHook>>(),
         sp.GetRequiredService<ResourceNotificationService>(),
+        bootstrapState,
         enableDex));
 
 cluster
@@ -85,22 +112,41 @@ cluster
 // ---------------------------------------------------------------------------------------------
 // Redis — Aspire-managed, pinned to the Procfile's hard-coded localhost:6379 (the Go components
 // below do not read a Redis connection string from configuration; they hard-code
-// `--redis localhost:6379`, matching the Procfile exactly).
+// `--redis localhost:6379`, matching the Procfile exactly — a plain host:port with no embedded
+// credentials).
+//
+// SECURITY BOUNDARY: builder.AddRedis(...) generates and enforces a random password by default.
+// The real Argo CD components authenticate to Redis via the REDIS_PASSWORD environment variable
+// (see util/cache/cache.go), never via the --redis flag, so leaving Aspire's default password in
+// place while every component's --redis flag stays a bare host:port would make every component
+// fail Redis auth (NOAUTH). Two ways to reconcile this were considered:
+//   1. Thread the generated password into every component via REDIS_PASSWORD (matches upstream
+//      auth exactly, keeps Redis network-authenticated).
+//   2. Disable the password outright with `.WithPassword(null)`, matching the Procfile's own
+//      posture: Redis listens only on localhost, with no auth, exactly as `redis-server` run
+//      directly (unauthenticated) would for local development.
+// This AppHost uses (2): Redis here is local-only (bound to the host loopback interface, never
+// exposed to the Kind cluster or any external network), so an unauthenticated local Redis exactly
+// mirrors both the Procfile's own security posture and upstream's documented local dev setup. If
+// PasswordParameter is non-null for any other reason (e.g. a future Aspire default change), the
+// components below still thread it through correctly via REDIS_PASSWORD — see
+// ArgoCdComponents.WithRedisPassword — so this remains safe even if that assumption changes.
 // ---------------------------------------------------------------------------------------------
 var redis = builder
     .AddRedis("redis")
-    .WithHostPort(6379);
+    .WithHostPort(6379)
+    .WithPassword(null);
 
 // ---------------------------------------------------------------------------------------------
 // Argo CD components — native host processes, one per Procfile entry, matching commands/env/ports
 // exactly (see ArgoCdComponents.cs). `.WaitFor` below only orders process *launch*; like the
 // Procfile itself, nothing here blocks on the target TCP ports actually accepting connections.
 // ---------------------------------------------------------------------------------------------
-var repoServer = builder.AddArgoCdRepoServer(repoRoot).WaitFor(redis);
+var repoServer = builder.AddArgoCdRepoServer(repoRoot, redis).WaitFor(redis);
 var commitServer = builder.AddArgoCdCommitServer(repoRoot);
-var apiServer = builder.AddArgoCdApiServer(repoRoot).WaitFor(redis).WaitFor(repoServer);
+var apiServer = builder.AddArgoCdApiServer(repoRoot, redis).WaitFor(redis).WaitFor(repoServer);
 var applicationController = builder
-    .AddArgoCdApplicationController(repoRoot)
+    .AddArgoCdApplicationController(repoRoot, redis)
     .WaitFor(redis)
     .WaitFor(repoServer)
     .WaitFor(commitServer);
@@ -117,12 +163,23 @@ if (enableCmp)
 
 if (enableDex)
 {
-    // Dex (OIDC provider) is not a component of this repository — the Procfile runs it from a
-    // published container image, so it is modeled as an Aspire container resource, not an
-    // executable. Only needed to exercise SSO login flows, so it stays fully opt-in.
-    builder
-        .AddContainer("dex", "ghcr.io/dexidp/dex", "v2.45.1")
-        .WithHttpEndpoint(port: 5556, targetPort: 5556, name: "http", isProxied: false);
+    // Dex (OIDC provider) is not a component of this repository, so it is modeled the same way
+    // the Procfile models it: a config-generation step followed by a published container image.
+    // Procfile ground truth (contrib/running-locally, `dex:` line):
+    //   ARGOCD_BINARY_NAME=argocd-dex go run github.com/argoproj/argo-cd/v3/cmd gendexcfg \
+    //       -o `pwd`/dist/dex.yaml &&
+    //     (test -f dist/dex.yaml || { echo 'Failed to generate dex configuration'; exit 1; }) &&
+    //     docker run ... -v `pwd`/dist/dex.yaml:/dex.yaml ghcr.io/dexidp/dex:v2.45.1 \
+    //         dex serve /dex.yaml
+    // Only needed to exercise SSO login flows, so the whole block stays fully opt-in.
+    var dexConfigPath = ArgoCdPaths.DexConfigPath(repoRoot);
+    ArgoCdPaths.EnsureDirectoryExists(Path.GetDirectoryName(dexConfigPath)!);
+
+    // See ArgoCdDex.cs (AddArgoCdGenDexConfig / AddArgoCdDex) for the exact command/args/env,
+    // bind-mount, and WaitFor/WaitForCompletion ordering — extracted there so this resource graph
+    // is unit-testable independently of this top-level-statements Program entry point.
+    var gendexcfg = builder.AddArgoCdGenDexConfig(repoRoot, dexConfigPath, cluster);
+    builder.AddArgoCdDex(dexConfigPath, gendexcfg);
 }
 
 // ---------------------------------------------------------------------------------------------
