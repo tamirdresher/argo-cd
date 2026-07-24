@@ -103,9 +103,9 @@ public sealed class ArgoCdComponentsTests
             "--redis", "localhost:6379",
             "--repo-server", "localhost:8081",
             "--commit-server", "localhost:8086",
-            "--application-namespaces", "",
-            "--server-side-diff-enabled", "false",
-            "--hydrator-enabled", "false",
+            "--application-namespaces=",
+            "--server-side-diff-enabled=false",
+            "--hydrator-enabled=false",
         }, args);
 
         var env = await GetEnvironmentAsync(resource);
@@ -136,13 +136,13 @@ public sealed class ArgoCdComponentsTests
             "run", "./cmd/main.go",
             "--loglevel", "debug",
             "--redis", "localhost:6379",
-            "--disable-auth", "true",
+            "--disable-auth=true",
             "--insecure",
             "--dex-server", "http://localhost:5556",
             "--repo-server", "localhost:8081",
             "--port", "8080",
-            "--application-namespaces", "",
-            "--hydrator-enabled", "false",
+            "--application-namespaces=",
+            "--hydrator-enabled=false",
         }, args);
 
         var env = await GetEnvironmentAsync(resource);
@@ -263,8 +263,8 @@ public sealed class ArgoCdComponentsTests
         {
             "run", "./cmd/main.go",
             "--loglevel", "debug",
-            "--application-namespaces", "",
-            "--self-service-notification-enabled", "false",
+            "--application-namespaces=",
+            "--self-service-notification-enabled=false",
         }, args);
 
         var env = await GetEnvironmentAsync(resource);

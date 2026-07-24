@@ -10,7 +10,7 @@ namespace ArgoCd.Aspire.AppHost;
 /// <c>argocd-initial-admin-secret</c> Kubernetes Secret and decodes its <c>password</c> field in
 /// managed C# code, never by piping through a shell.
 ///
-/// The dev loop's API server runs with <c>--disable-auth true</c> (see
+/// The dev loop's API server runs with <c>--disable-auth=true</c> (see
 /// <see cref="ArgoCdComponents.AddArgoCdApiServer"/>, matching the Procfile entry verbatim), so no
 /// login is actually required to browse the UI/API — the command reports that fact when the
 /// Secret does not exist (or is not yet populated) instead of failing. If a contributor
@@ -47,7 +47,7 @@ public static class AdminCredentialCommand
                 {
                     var failureText = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
 
-                    // The dev loop always starts the API server with --disable-auth true, so this
+                    // The dev loop always starts the API server with --disable-auth=true, so this
                     // Secret is never created by this dev loop's own bootstrap. Report that
                     // clearly instead of surfacing a scary-looking "NotFound" kubectl error.
                     if (failureText.Contains("NotFound", StringComparison.OrdinalIgnoreCase))
@@ -55,7 +55,7 @@ public static class AdminCredentialCommand
                         return CommandResults.Success(
                             "No admin password required.",
                             $"Secret '{SecretName}' was not found in namespace '{Namespace}'. " +
-                            "The dev loop's api-server runs with --disable-auth true (matching the " +
+                            "The dev loop's api-server runs with --disable-auth=true (matching the " +
                             "Procfile entry), so the UI and API can be used without logging in. If " +
                             "you re-enabled auth manually, create the secret and re-run this command.",
                             CommandResultFormat.Text,
@@ -74,7 +74,7 @@ public static class AdminCredentialCommand
                     return CommandResults.Success(
                         "No admin password required.",
                         $"Secret '{SecretName}' exists but its 'password' field is empty. The dev " +
-                        "loop's api-server runs with --disable-auth true, so no login is required.",
+                        "loop's api-server runs with --disable-auth=true, so no login is required.",
                         CommandResultFormat.Text,
                         true);
                 }
@@ -103,7 +103,7 @@ public static class AdminCredentialCommand
                 Description =
                     "Decodes and shows the Argo CD admin password from the " +
                     "argocd-initial-admin-secret Secret (cross-platform, no shell pipe). Reports " +
-                    "that no password is needed when the dev loop's --disable-auth true is active.",
+                    "that no password is needed when the dev loop's --disable-auth=true is active.",
                 IconName = "Key",
                 UpdateState = _ => ResourceCommandState.Enabled,
             });

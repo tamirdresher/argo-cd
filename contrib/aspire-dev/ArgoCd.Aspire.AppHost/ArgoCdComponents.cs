@@ -78,7 +78,7 @@ internal static class ArgoCdComponents
         {
             "--loglevel", "debug",
             "--redis", "localhost:6379",
-            "--disable-auth", "true",
+            "--disable-auth=true",
             "--insecure",
             "--dex-server", "http://localhost:5556",
             "--repo-server", "localhost:8081",
@@ -278,15 +278,14 @@ internal static class ArgoCdComponents
     }
 
     /// <summary>
-    /// Always appends <c>--flag value</c>, using the environment variable's value when set,
+    /// Always appends <c>--flag=value</c>, using the environment variable's value when set,
     /// otherwise <paramref name="defaultValue"/>. Mirrors Procfile <c>${VAR:-default}</c> bash
     /// expansions, which always pass the flag.
     /// </summary>
     private static void AppendFlagWithDefault(List<string> args, string flagName, string envVarName, string defaultValue)
     {
         var value = Environment.GetEnvironmentVariable(envVarName);
-        args.Add(flagName);
-        args.Add(string.IsNullOrEmpty(value) ? defaultValue : value);
+        args.Add($"{flagName}={(string.IsNullOrEmpty(value) ? defaultValue : value)}");
     }
 
     /// <summary>
