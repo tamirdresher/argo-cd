@@ -19,11 +19,14 @@ public static class ArgoCdUiDependencies
     /// </summary>
     public const string SkipEnvironmentVariable = "ARGOCD_ASPIRE_SKIP_UI_INSTALL";
 
+    public readonly record struct PnpmInvocation(string Command, string[] Arguments);
+
     /// <summary>
-    /// True if <c>ui/node_modules</c> is missing, or if <c>ui/pnpm-lock.yaml</c> was modified more
-    /// recently than <c>ui/node_modules</c> (a cheap, dependency-free proxy for "the lockfile
-    /// changed since the last install" — the same heuristic tools like Yarn/npm's own "up to
-    /// date" checks use, without needing to shell out or parse the lockfile).
+    /// True if <c>ui/node_modules</c> is missing, or if <c>ui/package.json</c> or
+    /// <c>ui/pnpm-lock.yaml</c> was modified more recently than <c>ui/node_modules</c> (a cheap,
+    /// dependency-free proxy for "the manifest changed since the last install" — the same
+    /// heuristic tools like Yarn/npm's own "up to date" checks use, without needing to shell out
+    /// or parse the lockfile).
     /// </summary>
     public static bool NeedsInstall(string uiDir)
     {
@@ -33,16 +36,21 @@ public static class ArgoCdUiDependencies
             return true;
         }
 
-        var lockFilePath = Path.Combine(uiDir, "pnpm-lock.yaml");
-        if (!File.Exists(lockFilePath))
+        return IsNewerThanNodeModules(Path.Combine(uiDir, "package.json"), nodeModulesPath)
+            || IsNewerThanNodeModules(Path.Combine(uiDir, "pnpm-lock.yaml"), nodeModulesPath);
+    }
+
+    private static bool IsNewerThanNodeModules(string dependencyFilePath, string nodeModulesPath)
+    {
+        if (!File.Exists(dependencyFilePath))
         {
-            // No lockfile to compare against (unexpected in this repository, but don't force a
+            // No manifest to compare against (unexpected in this repository, but don't force a
             // reinstall just because we can't find it) — node_modules already exists, so assume
             // it's usable.
             return false;
         }
 
-        return File.GetLastWriteTimeUtc(lockFilePath) > Directory.GetLastWriteTimeUtc(nodeModulesPath);
+        return File.GetLastWriteTimeUtc(dependencyFilePath) > Directory.GetLastWriteTimeUtc(nodeModulesPath);
     }
 
     /// <summary>
@@ -67,10 +75,13 @@ public static class ArgoCdUiDependencies
             return;
         }
 
+        var pnpm = GetPnpmInvocation();
+        var args = pnpm.Arguments.Concat(["install"]).ToArray();
+
         var (exitCode, stdout, stderr) = ArgoCdManifestRenderer
             .RunCaptureAsync(
-                "corepack",
-                ["pnpm", "install"],
+                pnpm.Command,
+                args,
                 timeout,
                 CancellationToken.None,
                 workingDirectory: uiDir)
@@ -87,6 +98,27 @@ public static class ArgoCdUiDependencies
                 $"or install dependencies manually with 'corepack pnpm install' in '{uiDir}'; " +
                 $"or set {SkipEnvironmentVariable}=true to skip automatic installation.");
         }
+    }
+
+    public static PnpmInvocation GetPnpmInvocation()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var path = Environment.GetEnvironmentVariable("PATH");
+            if (!string.IsNullOrEmpty(path))
+            {
+                foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var pnpmCjs = Path.Combine(directory, "node_modules", "pnpm", "bin", "pnpm.cjs");
+                    if (File.Exists(pnpmCjs))
+                    {
+                        return new PnpmInvocation("node", [pnpmCjs]);
+                    }
+                }
+            }
+        }
+
+        return new PnpmInvocation("pnpm", []);
     }
 
     private static bool IsSkipRequested()

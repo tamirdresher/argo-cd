@@ -79,9 +79,15 @@ public sealed class ArgoCdStateBootstrapHook(
         DistributedApplicationExecutionContext executionContext,
         CancellationToken cancellationToken)
     {
+        eventing.Subscribe<BeforeStartEvent>(OnBeforeStartAsync);
         eventing.Subscribe<KindClusterReadyEvent>(cluster, OnKindClusterReadyAsync);
         return Task.CompletedTask;
     }
+
+    private Task OnBeforeStartAsync(
+        BeforeStartEvent applicationEvent,
+        CancellationToken cancellationToken) =>
+        BootstrapAsync(cluster, cancellationToken);
 
     private Task OnKindClusterReadyAsync(
         KindClusterReadyEvent applicationEvent,
@@ -92,6 +98,11 @@ public sealed class ArgoCdStateBootstrapHook(
         KindClusterResource cluster,
         CancellationToken cancellationToken = default)
     {
+        if (bootstrapState.Completed)
+        {
+            return;
+        }
+
         var repoRoot = ResolveRepoRoot();
         if (repoRoot is null)
         {

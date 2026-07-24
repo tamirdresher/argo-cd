@@ -79,18 +79,7 @@ public static class ArgoCdPrerequisites
     {
         try
         {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = command,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var arg in args)
-            {
-                startInfo.ArgumentList.Add(arg);
-            }
+            var startInfo = CreateStartInfo(command, args);
 
             using var process = Process.Start(startInfo);
             if (process is null)
@@ -110,5 +99,77 @@ public static class ArgoCdPrerequisites
         {
             return false;
         }
+    }
+
+    private static ProcessStartInfo CreateStartInfo(string command, string[] args)
+    {
+        command = ResolveWindowsCommandPath(command);
+
+        if (OperatingSystem.IsWindows()
+            && Path.GetExtension(command) is var extension
+            && (extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".bat", StringComparison.OrdinalIgnoreCase)))
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add(command);
+            foreach (var arg in args)
+            {
+                startInfo.ArgumentList.Add(arg);
+            }
+
+            return startInfo;
+        }
+
+        var directStartInfo = new ProcessStartInfo
+        {
+            FileName = command,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in args)
+        {
+            directStartInfo.ArgumentList.Add(arg);
+        }
+
+        return directStartInfo;
+    }
+
+    private static string ResolveWindowsCommandPath(string command)
+    {
+        if (!OperatingSystem.IsWindows() || Path.GetExtension(command).Length > 0)
+        {
+            return command;
+        }
+
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(path))
+        {
+            return command;
+        }
+
+        var pathExt = Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD";
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var extension in pathExt.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var candidate = Path.Combine(directory, command + extension.ToLowerInvariant());
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        return command;
     }
 }

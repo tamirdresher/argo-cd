@@ -24,6 +24,7 @@
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Eventing;
 using Aspire.Hosting.Go;
 using Aspire.Hosting.Lifecycle;
 using ArgoCd.Aspire.AppHost;
@@ -98,13 +99,15 @@ builder.Services
             ? HealthCheckResult.Unhealthy("Argo CD state-only manifest bootstrap failed.")
             : HealthCheckResult.Unhealthy("Argo CD state-only manifest bootstrap has not completed yet."));
 
-builder.Services.AddSingleton<IDistributedApplicationEventingSubscriber>(sp =>
+builder.Services.AddSingleton(sp =>
     new ArgoCdStateBootstrapHook(
         sp.GetRequiredService<ILogger<ArgoCdStateBootstrapHook>>(),
         sp.GetRequiredService<ResourceNotificationService>(),
         bootstrapState,
         cluster.Resource,
         enableDex));
+builder.Services.AddSingleton<IDistributedApplicationEventingSubscriber>(sp =>
+    sp.GetRequiredService<ArgoCdStateBootstrapHook>());
 
 cluster
     .WithRepoServerOverrideCommand(repoRoot)
@@ -209,14 +212,14 @@ builder
 var uiDir = Path.Combine(repoRoot, "ui");
 
 // Automate the one dependency-install step the UI needs before `pnpm start` can succeed: this
-// resolves and installs node_modules via the exact pnpm version ui/package.json pins, using
-// corepack (already validated as a hard prerequisite above). Skips entirely when node_modules is
-// already up to date with pnpm-lock.yaml, or when ARGOCD_ASPIRE_SKIP_UI_INSTALL is set — codegen
+// resolves and installs node_modules via pnpm. Skips entirely when node_modules is already up to
+// date with package.json/pnpm-lock.yaml, or when ARGOCD_ASPIRE_SKIP_UI_INSTALL is set — codegen
 // itself stays on-demand (`make codegen`), never run automatically here.
 ArgoCdUiDependencies.EnsureInstalledOrThrow(uiDir, TimeSpan.FromMinutes(5));
+var pnpm = ArgoCdUiDependencies.GetPnpmInvocation();
 
 builder
-    .AddExecutable("ui", "pnpm", uiDir, "start")
+    .AddExecutable("ui", pnpm.Command, uiDir, pnpm.Arguments.Concat(["start"]).ToArray())
     .WithEnvironment("ARGOCD_API_URL", apiServer.GetEndpoint("http"))
     .WithHttpEndpoint(port: 4000, targetPort: 4000, name: "http", isProxied: false)
     .WaitFor(apiServer);

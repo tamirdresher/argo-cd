@@ -67,6 +67,20 @@ public sealed class ArgoCdUiDependenciesTests : IDisposable
     }
 
     [Fact]
+    public void NeedsInstall_ReturnsTrue_WhenPackageJsonNewerThanNodeModules()
+    {
+        var nodeModules = Path.Combine(_uiDir, "node_modules");
+        Directory.CreateDirectory(nodeModules);
+        Directory.SetLastWriteTimeUtc(nodeModules, DateTime.UtcNow.AddMinutes(-10));
+
+        var packageJson = Path.Combine(_uiDir, "package.json");
+        File.WriteAllText(packageJson, """{"devDependencies":{"@codecov/webpack-plugin":"^2.0.1"}}""");
+        File.SetLastWriteTimeUtc(packageJson, DateTime.UtcNow);
+
+        Assert.True(ArgoCdUiDependencies.NeedsInstall(_uiDir));
+    }
+
+    [Fact]
     public void EnsureInstalledOrThrow_SkipsEntirely_WhenSkipEnvironmentVariableSet()
     {
         // node_modules missing (would normally require an install), but the skip variable must
