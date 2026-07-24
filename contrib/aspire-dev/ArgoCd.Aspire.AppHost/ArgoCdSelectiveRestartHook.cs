@@ -1,5 +1,6 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Eventing;
 using Aspire.Hosting.Lifecycle;
 using Microsoft.Extensions.Logging;
 
@@ -8,12 +9,12 @@ namespace ArgoCd.Aspire.AppHost;
 /// <summary>
 /// Watches each Argo CD Go component's own source directory and, on a debounced file-write,
 /// invokes that single resource's built-in <c>restart</c> command (the same command the Aspire
-/// dashboard's "Restart" button invokes) — never the process-wide <c>dotnet run</c> for the
+/// dashboard's "Restart" button invokes) — never the process-wide <c>aspire start</c> for the
 /// AppHost itself, and never a rebuild/redeploy of a container image.
 ///
 /// This is what makes "editing repo-server's Go source restarts only repo-server" true: each
-/// component is registered by <see cref="ArgoCdComponents"/> as a plain
-/// <c>AddExecutable("go", repoRoot, ["run", "./cmd/main.go", ...])</c> resource, so Aspire's
+/// component is registered by <see cref="ArgoCdComponents"/> as an official
+/// <c>GoAppResource</c>, so Aspire's
 /// built-in restart command for that resource is exactly "stop the process, start it again" —
 /// which re-runs <c>go run</c> and therefore picks up the edited source with no separate build
 /// step, no image, and no effect on any other component's already-running process.
@@ -37,15 +38,15 @@ namespace ArgoCd.Aspire.AppHost;
 /// editing it and needing every component restarted is treated as an accepted, documented
 /// limitation (see README) rather than something this hook silently guesses about.
 ///
-/// Registered directly by AppHost.cs via
-/// <c>builder.Services.AddSingleton&lt;IDistributedApplicationLifecycleHook, ArgoCdSelectiveRestartHook&gt;()</c>;
+/// Registered directly by AppHost.cs as an
+/// <see cref="IDistributedApplicationEventingSubscriber"/>.
 /// does not modify <see cref="ArgoCdComponents"/> or any vendored Aspire integration.
 /// </summary>
 public sealed class ArgoCdSelectiveRestartHook(
     ILogger<ArgoCdSelectiveRestartHook> logger,
     IServiceProvider serviceProvider,
     bool enableCmp = false)
-    : IDistributedApplicationLifecycleHook, IAsyncDisposable
+    : IDistributedApplicationEventingSubscriber, IAsyncDisposable
 {
     /// <summary>
     /// Coalescing window for bursts of filesystem events (editors frequently emit several
@@ -111,11 +112,17 @@ public sealed class ArgoCdSelectiveRestartHook(
         }
     }
 
-    public Task BeforeStartAsync(DistributedApplicationModel appModel, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
-
-    public Task AfterEndpointsAllocatedAsync(DistributedApplicationModel appModel, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+    /// <inheritdoc />
+    public Task SubscribeAsync(
+        IDistributedApplicationEventing eventing,
+        DistributedApplicationExecutionContext executionContext,
+        CancellationToken cancellationToken)
+    {
+        eventing.Subscribe<AfterResourcesCreatedEvent>(
+            (applicationEvent, token) =>
+                AfterResourcesCreatedAsync(applicationEvent.Model, token));
+        return Task.CompletedTask;
+    }
 
     public Task AfterResourcesCreatedAsync(DistributedApplicationModel appModel, CancellationToken cancellationToken = default)
     {
@@ -297,8 +304,7 @@ public sealed class ArgoCdSelectiveRestartHook(
 
     /// <summary>
     /// Disposes every <see cref="FileSystemWatcher"/> and any still-pending debounce timer.
-    /// Called automatically by the DI container when registered via
-    /// <c>AddSingleton&lt;IDistributedApplicationLifecycleHook, ArgoCdSelectiveRestartHook&gt;()</c>
+    /// Called automatically by the DI container when registered as an eventing subscriber
     /// as the AppHost's own host shuts down, so watcher threads never outlive the AppHost process.
     /// </summary>
     public ValueTask DisposeAsync()

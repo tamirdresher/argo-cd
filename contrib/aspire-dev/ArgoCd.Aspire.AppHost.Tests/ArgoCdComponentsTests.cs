@@ -1,6 +1,7 @@
 // contrib/aspire-dev/ArgoCd.Aspire.AppHost.Tests/ArgoCdComponentsTests.cs
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Go;
 using ArgoCd.Aspire.AppHost;
 using Xunit;
 
@@ -27,7 +28,7 @@ public sealed class ArgoCdComponentsTests
     /// Invokes every <see cref="CommandLineArgsCallbackAnnotation"/> on the resource and returns
     /// the fully materialized argument list, in the order the Aspire executor would see them.
     /// </summary>
-    private static async Task<List<string>> GetArgsAsync(IResourceBuilder<ExecutableResource> resourceBuilder)
+    private static async Task<List<string>> GetArgsAsync(IResourceBuilder<GoAppResource> resourceBuilder)
     {
         var executionContext = new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run);
         var args = new List<object>();
@@ -46,7 +47,7 @@ public sealed class ArgoCdComponentsTests
     /// Invokes every <see cref="EnvironmentCallbackAnnotation"/> on the resource and returns the
     /// fully materialized environment variable dictionary.
     /// </summary>
-    private static async Task<Dictionary<string, string>> GetEnvironmentAsync(IResourceBuilder<ExecutableResource> resourceBuilder)
+    private static async Task<Dictionary<string, string>> GetEnvironmentAsync(IResourceBuilder<GoAppResource> resourceBuilder)
     {
         var executionContext = new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run);
         var env = new Dictionary<string, object>();
@@ -59,7 +60,7 @@ public sealed class ArgoCdComponentsTests
         return env.ToDictionary(kv => kv.Key, kv => kv.Value?.ToString() ?? string.Empty);
     }
 
-    private static List<EndpointAnnotation> GetEndpoints(IResourceBuilder<ExecutableResource> resourceBuilder) =>
+    private static List<EndpointAnnotation> GetEndpoints(IResourceBuilder<GoAppResource> resourceBuilder) =>
         resourceBuilder.Resource.Annotations.OfType<EndpointAnnotation>().ToList();
 
     /// <summary>
@@ -70,7 +71,7 @@ public sealed class ArgoCdComponentsTests
     /// time) rather than a materialized string — stringifying it here would defeat the purpose of
     /// proving the *same* parameter instance backs both the Redis resource and the component.
     /// </summary>
-    private static async Task<Dictionary<string, object?>> GetRawEnvironmentAsync(IResourceBuilder<ExecutableResource> resourceBuilder)
+    private static async Task<Dictionary<string, object?>> GetRawEnvironmentAsync(IResourceBuilder<GoAppResource> resourceBuilder)
     {
         var executionContext = new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run);
         var env = new Dictionary<string, object>();
@@ -299,6 +300,26 @@ public sealed class ArgoCdComponentsTests
             Assert.Equal("argocd-cmp-server", env["ARGOCD_BINARY_NAME"]);
             Assert.True(env.ContainsKey("ARGOCD_PLUGINSOCKFILEPATH"));
         }
+    }
+
+    [Fact]
+    public void CoreComponents_UseOfficialGoAppResourceShape()
+    {
+        using var builder = NewBuilderDisposable();
+        var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+
+        IResourceBuilder<GoAppResource>[] resources =
+        [
+            builder.Builder.AddArgoCdApplicationController(FakeRepoRoot, redis),
+            builder.Builder.AddArgoCdApiServer(FakeRepoRoot, redis),
+            builder.Builder.AddArgoCdRepoServer(FakeRepoRoot, redis),
+            builder.Builder.AddArgoCdCommitServer(FakeRepoRoot),
+            builder.Builder.AddArgoCdApplicationSetController(FakeRepoRoot),
+            builder.Builder.AddArgoCdNotificationsController(FakeRepoRoot),
+        ];
+
+        Assert.All(resources, resource => Assert.IsType<GoAppResource>(resource.Resource));
+        Assert.All(resources, resource => Assert.Equal("go", resource.Resource.Command));
     }
 
     [Fact]

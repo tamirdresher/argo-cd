@@ -1,6 +1,7 @@
 // contrib/aspire-dev/ArgoCd.Aspire.AppHost/ArgoCdDex.cs
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Go;
 
 namespace ArgoCd.Aspire.AppHost;
 
@@ -42,18 +43,16 @@ internal static class ArgoCdDex
     /// <c>.WithHealthCheck(ArgoCdBootstrapState.HealthCheckKey)</c>, and <c>WaitFor</c> waits for a
     /// dependency with an attached health check to become Healthy, not merely Running.
     /// </summary>
-    public static IResourceBuilder<ExecutableResource> AddArgoCdGenDexConfig(
+    public static IResourceBuilder<GoAppResource> AddArgoCdGenDexConfig(
         this IDistributedApplicationBuilder builder,
         string repoRoot,
         string dexConfigPath,
         IResourceBuilder<KindClusterResource> cluster)
     {
         return builder
-            .AddExecutable(
+            .AddGoApp("gendexcfg", repoRoot, "./cmd/main.go")
+            .WithAppArgs(
                 "gendexcfg",
-                "go",
-                repoRoot,
-                "run", "./cmd/main.go", "gendexcfg",
                 "-o", dexConfigPath,
                 "--kubeconfig", cluster.Resource.KubeconfigPath,
                 "-n", "argocd")
@@ -74,7 +73,7 @@ internal static class ArgoCdDex
     public static IResourceBuilder<ContainerResource> AddArgoCdDex(
         this IDistributedApplicationBuilder builder,
         string dexConfigPath,
-        IResourceBuilder<ExecutableResource> gendexcfg)
+        IResourceBuilder<GoAppResource> gendexcfg)
     {
         return builder
             .AddContainer("dex", "ghcr.io/dexidp/dex", "v2.45.1")

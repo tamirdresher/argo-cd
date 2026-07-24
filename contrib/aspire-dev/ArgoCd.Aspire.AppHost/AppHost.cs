@@ -7,7 +7,7 @@
 // StatefulSet, or Service. Instead, every Argo CD component that the repository's own Procfile
 // would launch runs here as a native Aspire executable resource: the exact same `go run
 // ./cmd/main.go ...` command, environment variables (including ARGOCD_FAKE_IN_CLUSTER=true), and
-// ports as Procfile, so `dotnet run` (or Visual Studio F5) replaces `make start` / `goreman start`
+// ports as Procfile, so `aspire start` (or Visual Studio F5) replaces `make start` / `goreman start`
 // / `tilt up` for day-to-day development without ever requiring `make`, a POSIX shell, a Linux
 // cross-compiled binary, `docker build`, or `kind load docker-image`.
 //
@@ -17,13 +17,14 @@
 // needing in-cluster component images. This AppHost targets host-process-first, low-overhead,
 // selective-restart iteration on Argo CD's own Go/TypeScript source.
 //
-// Run with:            dotnet run --project contrib/aspire-dev/ArgoCd.Aspire.AppHost
+// Run with:            aspire start contrib/aspire-dev/ArgoCd.Aspire.AppHost/ArgoCd.Aspire.AppHost.csproj
 // Or in Visual Studio:  F5 with ArgoCd.Aspire.AppHost as the startup project.
 //
 // See contrib/aspire-dev/README.md for the full workflow, resource graph, and troubleshooting.
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Go;
 using Aspire.Hosting.Lifecycle;
 using ArgoCd.Aspire.AppHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -97,11 +98,12 @@ builder.Services
             ? HealthCheckResult.Unhealthy("Argo CD state-only manifest bootstrap failed.")
             : HealthCheckResult.Unhealthy("Argo CD state-only manifest bootstrap has not completed yet."));
 
-builder.Services.AddSingleton<IDistributedApplicationLifecycleHook>(sp =>
+builder.Services.AddSingleton<IDistributedApplicationEventingSubscriber>(sp =>
     new ArgoCdStateBootstrapHook(
         sp.GetRequiredService<ILogger<ArgoCdStateBootstrapHook>>(),
         sp.GetRequiredService<ResourceNotificationService>(),
         bootstrapState,
+        cluster.Resource,
         enableDex));
 
 cluster
@@ -189,11 +191,11 @@ if (enableDex)
 // read them exactly like it would from a mounted ConfigMap volume.
 // ---------------------------------------------------------------------------------------------
 builder
-    .AddExecutable(
+    .AddGoApp(
         "dev-mounter",
-        "go",
         repoRoot,
-        "run", "hack/dev-mounter/main.go",
+        "hack/dev-mounter/main.go")
+    .WithAppArgs(
         "--kubeconfig", cluster.Resource.KubeconfigPath,
         "--configmap", $"argocd-ssh-known-hosts-cm={ArgoCdPaths.SshDataPath}",
         "--configmap", $"argocd-tls-certs-cm={ArgoCdPaths.TlsDataPath}",
@@ -224,7 +226,7 @@ builder
 // process. No full AppHost restart, no docker build/kind load: the fast, targeted inner loop
 // this whole design exists to provide.
 // ---------------------------------------------------------------------------------------------
-builder.Services.AddSingleton<IDistributedApplicationLifecycleHook>(sp =>
+builder.Services.AddSingleton<IDistributedApplicationEventingSubscriber>(sp =>
     new ArgoCdSelectiveRestartHook(
         sp.GetRequiredService<ILogger<ArgoCdSelectiveRestartHook>>(),
         sp,

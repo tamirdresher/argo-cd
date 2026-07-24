@@ -1,5 +1,7 @@
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Eventing;
 using Aspire.Hosting.Lifecycle;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text;
@@ -7,17 +9,21 @@ using System.Text;
 namespace Aspire.Hosting;
 
 /// <summary>
-/// Manages the Kind cluster lifecycle as a .NET Aspire application lifecycle hook:
+/// Manages the Kind cluster lifecycle through .NET Aspire application events:
 /// <list type="bullet">
 ///   <item><description><b>BeforeStart:</b> creates all Kind clusters in parallel.</description></item>
 ///   <item><description><b>AfterResourcesCreated:</b> health-checks each cluster, then applies manifests and Helm charts.</description></item>
-///   <item><description><b>BeforeStop:</b> deletes all Kind clusters (best-effort) and cleans up kubeconfig files.</description></item>
+///   <item><description><b>Hosted service stop:</b> deletes ephemeral Kind clusters (best-effort) and cleans up kubeconfig files.</description></item>
 /// </list>
 /// </summary>
-internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycleHook
+internal sealed class KindClusterLifecycleHook :
+    IDistributedApplicationEventingSubscriber,
+    IHostedService
 {
     private readonly ILogger<KindClusterLifecycleHook> _logger;
     private readonly ResourceNotificationService _notifications;
+    private readonly IDistributedApplicationEventing _eventing;
+    private DistributedApplicationModel? _appModel;
 
     private const int MaxHealthCheckAttempts = 15;
     private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromSeconds(2);
@@ -31,13 +37,51 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
 
     public KindClusterLifecycleHook(
         ILogger<KindClusterLifecycleHook> logger,
-        ResourceNotificationService notifications)
+        ResourceNotificationService notifications,
+        IDistributedApplicationEventing eventing)
     {
         _logger = logger;
         _notifications = notifications;
+        _eventing = eventing;
     }
 
-    // ── Lifecycle entry points ────────────────────────────────────────────────
+    // ── Eventing entry points ─────────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public Task SubscribeAsync(
+        IDistributedApplicationEventing eventing,
+        DistributedApplicationExecutionContext executionContext,
+        CancellationToken cancellationToken)
+    {
+        eventing.Subscribe<BeforeStartEvent>(OnBeforeStartAsync);
+        eventing.Subscribe<AfterResourcesCreatedEvent>(OnAfterResourcesCreatedAsync);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public Task StopAsync(CancellationToken cancellationToken) =>
+        _appModel is null
+            ? Task.CompletedTask
+            : BeforeStopAsync(_appModel, cancellationToken);
+
+    private Task OnBeforeStartAsync(
+        BeforeStartEvent applicationEvent,
+        CancellationToken cancellationToken)
+    {
+        _appModel = applicationEvent.Model;
+        return BeforeStartAsync(applicationEvent.Model, cancellationToken);
+    }
+
+    private Task OnAfterResourcesCreatedAsync(
+        AfterResourcesCreatedEvent applicationEvent,
+        CancellationToken cancellationToken) =>
+        AfterResourcesCreatedAsync(
+            applicationEvent.Model,
+            cancellationToken,
+            applicationEvent.Services);
 
     /// <summary>Creates all Kind clusters in parallel before the application starts.</summary>
     public async Task BeforeStartAsync(
@@ -66,14 +110,16 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
     /// <summary>
     /// Health-checks all clusters after resources are created, then applies manifests and Helm charts.
     /// </summary>
-    public async Task AfterResourcesCreatedAsync(
+    internal async Task AfterResourcesCreatedAsync(
         DistributedApplicationModel appModel,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IServiceProvider? services = null)
     {
         var clusters = appModel.Resources.OfType<KindClusterResource>().ToList();
         if (clusters.Count == 0) return;
 
-        await Task.WhenAll(clusters.Select(c => WaitForReadyThenPostDeployAsync(c, cancellationToken)));
+        await Task.WhenAll(clusters.Select(
+            c => WaitForReadyThenPostDeployAsync(c, services, cancellationToken)));
     }
 
     /// <summary>
@@ -83,7 +129,7 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
     /// re-applying CRDs/RBAC/ConfigMaps every time; use the explicit "Delete Kind Cluster"
     /// dashboard command (see <c>DeleteClusterCommand</c>) to tear those down deliberately.
     /// </summary>
-    public async Task BeforeStopAsync(
+    internal async Task BeforeStopAsync(
         DistributedApplicationModel appModel,
         CancellationToken cancellationToken = default)
     {
@@ -331,7 +377,9 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
     }
 
     private async Task WaitForReadyThenPostDeployAsync(
-        KindClusterResource cluster, CancellationToken cancellationToken)
+        KindClusterResource cluster,
+        IServiceProvider? services,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -379,6 +427,13 @@ internal sealed class KindClusterLifecycleHook : IDistributedApplicationLifecycl
                 cancellationToken,
                 includeLive: true,
                 message: "Kind cluster is ready; manifests and Helm charts applied");
+
+            if (services is not null)
+            {
+                await _eventing.PublishAsync(
+                    new KindClusterReadyEvent(cluster, services, _logger),
+                    cancellationToken);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

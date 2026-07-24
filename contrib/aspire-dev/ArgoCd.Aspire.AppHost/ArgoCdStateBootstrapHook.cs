@@ -1,4 +1,6 @@
+using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Eventing;
 using Aspire.Hosting.Lifecycle;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
@@ -20,7 +22,7 @@ namespace ArgoCd.Aspire.AppHost;
 /// processes need to find in the API server (CRD schemas, their own ServiceAccount/RBAC identity,
 /// and the ConfigMaps/Secrets they read via <c>ARGOCD_FAKE_IN_CLUSTER=true</c> in-process client).
 ///
-/// This exists as a small, separate lifecycle hook (rather than being folded into the vendored
+/// This exists as a small, separate eventing subscriber (rather than being folded into the vendored
 /// <c>ArgoCd.Aspire.Hosting.Kind</c> integration) because that vendored code's
 /// <c>WithManifest(...)</c> always does a plain client-side <c>kubectl apply -f</c>, which fails on
 /// the CRDs in particular: their embedded OpenAPI schemas make the
@@ -42,20 +44,19 @@ namespace ArgoCd.Aspire.AppHost;
 /// Secret, or RBAC object, so the subsequent server-side applies do not fail with
 /// "namespaces \"argocd\" not found".
 ///
-/// Registered directly by AppHost.cs alongside <c>AddKindCluster</c>; does not modify the vendored
-/// Kind integration in any way.
+/// Registered directly by AppHost.cs alongside <c>AddKindCluster</c>. It subscribes to the
+/// cluster-specific <see cref="KindClusterReadyEvent"/>, avoiding both deprecated lifecycle hooks
+/// and a readiness deadlock with this bootstrap's own health check.
 /// </summary>
 public sealed class ArgoCdStateBootstrapHook(
     ILogger<ArgoCdStateBootstrapHook> logger,
     ResourceNotificationService notifications,
     ArgoCdBootstrapState bootstrapState,
+    KindClusterResource cluster,
     bool enableDex = false)
-    : IDistributedApplicationLifecycleHook
+    : IDistributedApplicationEventingSubscriber
 {
-    private const string ClusterResourceName = "argocd-dev";
     private const string ArgoCdNamespace = "argocd";
-    private const int MaxWaitAttempts = 30;
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// Minimal inline Namespace manifest for <c>argocd</c>. None of the checked-in manifest files
@@ -72,48 +73,31 @@ public sealed class ArgoCdStateBootstrapHook(
           name: {ArgoCdNamespace}
         """;
 
-    public async Task AfterResourcesCreatedAsync(
-        DistributedApplicationModel appModel,
+    /// <inheritdoc />
+    public Task SubscribeAsync(
+        IDistributedApplicationEventing eventing,
+        DistributedApplicationExecutionContext executionContext,
+        CancellationToken cancellationToken)
+    {
+        eventing.Subscribe<KindClusterReadyEvent>(cluster, OnKindClusterReadyAsync);
+        return Task.CompletedTask;
+    }
+
+    private Task OnKindClusterReadyAsync(
+        KindClusterReadyEvent applicationEvent,
+        CancellationToken cancellationToken) =>
+        BootstrapAsync(applicationEvent.Cluster, cancellationToken);
+
+    internal async Task BootstrapAsync(
+        KindClusterResource cluster,
         CancellationToken cancellationToken = default)
     {
-        var cluster = appModel.Resources
-            .OfType<KindClusterResource>()
-            .FirstOrDefault(r => r.Name == ClusterResourceName);
-
-        if (cluster is null)
-        {
-            bootstrapState.MarkCompleted(succeeded: false);
-            return;
-        }
-
         var repoRoot = ResolveRepoRoot();
         if (repoRoot is null)
         {
             logger.LogWarning("Could not locate the repository root from '{BaseDirectory}'; skipping state bootstrap.", AppContext.BaseDirectory);
             bootstrapState.MarkCompleted(succeeded: false);
             return;
-        }
-
-        // AppHost.cs never registers a WithManifest/WithHelmChart step on this cluster builder, so
-        // KindClusterLifecycleHook's own AfterResourcesCreated pass applies nothing — this hook is
-        // the only thing that populates the cluster. We only need "the API server accepts kubectl"
-        // here, not "all pods ready" (there are no workload pods in this architecture at all), so
-        // this is a short, independent wait that avoids racing ahead of `kind create cluster`.
-        for (var attempt = 1; attempt <= MaxWaitAttempts; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (File.Exists(cluster.KubeconfigPath))
-            {
-                var (probeExit, _, _) = await RunAsync(
-                    "kubectl", ["get", "nodes", "--kubeconfig", cluster.KubeconfigPath], cancellationToken);
-                if (probeExit == 0)
-                {
-                    break;
-                }
-            }
-
-            await Task.Delay(RetryDelay, cancellationToken);
         }
 
         var allSucceeded = true;
@@ -164,7 +148,7 @@ public sealed class ArgoCdStateBootstrapHook(
     internal readonly record struct ApplyStep(string GroupName, ApplyStepKind Kind, IReadOnlyList<string>? RelativeFilePaths = null);
 
     /// <summary>
-    /// Builds the ordered, declarative list of apply steps <see cref="AfterResourcesCreatedAsync"/> executes
+    /// Builds the ordered, declarative list of apply steps <see cref="BootstrapAsync"/> executes
     /// against the Kind cluster. The <c>namespace</c> step is always first: every subsequent step applies
     /// namespaced objects (CRDs are cluster-scoped and would apply fine either way, but <c>config-rbac</c> and
     /// <c>dex-rbac</c> contain namespaced ConfigMaps/Secrets/Roles/RoleBindings that would fail with

@@ -1,6 +1,7 @@
 // contrib/aspire-dev/ArgoCd.Aspire.AppHost.Tests/ArgoCdDexTests.cs
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Go;
 using ArgoCd.Aspire.AppHost;
 using Xunit;
 
@@ -43,9 +44,9 @@ public sealed class ArgoCdDexTests
 
     /// <summary>
     /// Invokes every <see cref="CommandLineArgsCallbackAnnotation"/> on an
-    /// <see cref="ExecutableResource"/> and returns the fully materialized argument list.
+    /// <see cref="GoAppResource"/> and returns the fully materialized argument list.
     /// </summary>
-    private static async Task<List<string>> GetArgsAsync(IResourceBuilder<ExecutableResource> resourceBuilder)
+    private static async Task<List<string>> GetArgsAsync(IResourceBuilder<GoAppResource> resourceBuilder)
     {
         var args = new List<object>();
         foreach (var annotation in resourceBuilder.Resource.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
@@ -75,9 +76,9 @@ public sealed class ArgoCdDexTests
 
     /// <summary>
     /// Invokes every <see cref="EnvironmentCallbackAnnotation"/> on an
-    /// <see cref="ExecutableResource"/> and returns the fully materialized environment dictionary.
+    /// <see cref="GoAppResource"/> and returns the fully materialized environment dictionary.
     /// </summary>
-    private static async Task<Dictionary<string, string>> GetEnvironmentAsync(IResourceBuilder<ExecutableResource> resourceBuilder)
+    private static async Task<Dictionary<string, string>> GetEnvironmentAsync(IResourceBuilder<GoAppResource> resourceBuilder)
     {
         var executionContext = new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run);
         var env = new Dictionary<string, object>();

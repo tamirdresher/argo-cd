@@ -1,0 +1,54 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\tamirdresher\\.copilot\\repos\\copilot-worktrees\\argo-cd\\tamirdresher-microsoft-crispy-system\\contrib\\aspire-dev\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{5C0740F8-CF7F-9033-7A45-0C76A05CF809}|ArgoCd.Aspire.AppHost\\ArgoCd.Aspire.AppHost.csproj|c:\\users\\tamirdresher\\.copilot\\repos\\copilot-worktrees\\argo-cd\\tamirdresher-microsoft-crispy-system\\contrib\\aspire-dev\\argocd.aspire.apphost\\apphost.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{5C0740F8-CF7F-9033-7A45-0C76A05CF809}|ArgoCd.Aspire.AppHost\\ArgoCd.Aspire.AppHost.csproj|solutionrelative:argocd.aspire.apphost\\apphost.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{5C0740F8-CF7F-9033-7A45-0C76A05CF809}|ArgoCd.Aspire.AppHost\\ArgoCd.Aspire.AppHost.csproj|c:\\users\\tamirdresher\\.copilot\\repos\\copilot-worktrees\\argo-cd\\tamirdresher-microsoft-crispy-system\\contrib\\aspire-dev\\argocd.aspire.apphost\\argocdcomponents.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{5C0740F8-CF7F-9033-7A45-0C76A05CF809}|ArgoCd.Aspire.AppHost\\ArgoCd.Aspire.AppHost.csproj|solutionrelative:argocd.aspire.apphost\\argocdcomponents.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 1,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "ArgoCdComponents.cs",
+              "DocumentMoniker": "C:\\Users\\tamirdresher\\.copilot\\repos\\copilot-worktrees\\argo-cd\\tamirdresher-microsoft-crispy-system\\contrib\\aspire-dev\\ArgoCd.Aspire.AppHost\\ArgoCdComponents.cs",
+              "RelativeDocumentMoniker": "ArgoCd.Aspire.AppHost\\ArgoCdComponents.cs",
+              "ToolTip": "C:\\Users\\tamirdresher\\.copilot\\repos\\copilot-worktrees\\argo-cd\\tamirdresher-microsoft-crispy-system\\contrib\\aspire-dev\\ArgoCd.Aspire.AppHost\\ArgoCdComponents.cs",
+              "RelativeToolTip": "ArgoCd.Aspire.AppHost\\ArgoCdComponents.cs",
+              "ViewState": "AgIAAHAAAAAAAAAAAAAcwK8AAAA2AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-07-24T07:43:38.789Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "AppHost.cs",
+              "DocumentMoniker": "C:\\Users\\tamirdresher\\.copilot\\repos\\copilot-worktrees\\argo-cd\\tamirdresher-microsoft-crispy-system\\contrib\\aspire-dev\\ArgoCd.Aspire.AppHost\\AppHost.cs",
+              "RelativeDocumentMoniker": "ArgoCd.Aspire.AppHost\\AppHost.cs",
+              "ToolTip": "C:\\Users\\tamirdresher\\.copilot\\repos\\copilot-worktrees\\argo-cd\\tamirdresher-microsoft-crispy-system\\contrib\\aspire-dev\\ArgoCd.Aspire.AppHost\\AppHost.cs",
+              "RelativeToolTip": "ArgoCd.Aspire.AppHost\\AppHost.cs",
+              "ViewState": "AgIAABMAAAAAAAAAAAAqwCQAAAAYAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-07-24T07:43:03.051Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

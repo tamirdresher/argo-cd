@@ -17,12 +17,13 @@ Tilt when you need to validate what actually ships in a container.
 ## TL;DR
 
 ```powershell
-dotnet run --project contrib/aspire-dev/ArgoCd.Aspire.AppHost
+aspire start contrib/aspire-dev/ArgoCd.Aspire.AppHost/ArgoCd.Aspire.AppHost.csproj
 ```
 
-or open `contrib/aspire-dev/ArgoCd.Aspire.AppHost.sln` (or the repo root, if it has an
-`ArgoCd.Aspire.AppHost` startup project configured) in Visual Studio and press **F5**. The
-Aspire dashboard opens automatically and shows every resource, its logs, and its endpoints.
+or open `contrib/aspire-dev/ArgoCd.Aspire.slnx` in Visual Studio, select
+`ArgoCd.Aspire.AppHost` as the startup project, and press **F5**. The solution contains the
+AppHost, the vendored Kind hosting integration, and the test project. The Aspire dashboard
+opens automatically and shows every resource, its logs, and its endpoints.
 
 The AppHost validates your toolchain first (Docker, kind, kubectl, Go, Node, corepack — see
 [Prerequisites](#prerequisites)) and fails fast with an actionable message if something is
@@ -56,6 +57,12 @@ Every host-process component is launched with the **exact same command, flags, a
 variables** as the repo's `Procfile` (used by `hack/goreman-start.sh`), plus
 `ARGOCD_FAKE_IN_CLUSTER=true` so each binary behaves as if it were running inside the cluster
 while actually running on your machine.
+
+The Go processes are modeled with the official `Aspire.Hosting.Go` integration and `AddGoApp`,
+not hand-built `AddExecutable("go", ..., "run", ...)` resources. Aspire still materializes the
+same `go run ./cmd/main.go ...` command, while also understanding that the resources are Go apps
+and providing its supported Go/Delve debugging integration. `hack/dev-mounter` and the optional
+run-to-completion `gendexcfg` step use the same integration.
 
 ### Component command map
 
@@ -121,7 +128,7 @@ skipped by default and only started when explicitly requested:
 ```powershell
 $env:ARGOCD_ASPIRE_ENABLE_DEX = "true"
 $env:ARGOCD_ASPIRE_ENABLE_CMP = "true"
-dotnet run --project contrib/aspire-dev/ArgoCd.Aspire.AppHost
+aspire start contrib/aspire-dev/ArgoCd.Aspire.AppHost/ArgoCd.Aspire.AppHost.csproj
 ```
 
 **CMP on Windows is not supported and fails fast with an accurate diagnostic.** Argo CD's CMP
@@ -161,7 +168,7 @@ unset, neither resource exists and no Dex-related ports, processes, or files are
 resource ... delete-cluster`) — it is **not** the underlying `kind` cluster name. The actual `kind`
 cluster (and its kubeconfig) is provisioned once and **kept between runs**
 (`WithPersistentCluster()` — Aspire will reuse an existing cluster with a matching name instead of
-deleting and recreating it, avoiding a slow teardown/recreate cycle on every `dotnet run`). On
+deleting and recreating it, avoiding a slow teardown/recreate cycle on every `aspire start`). On
 first start (or whenever the cluster is missing), the AppHost:
 
 1. Waits for the Kind cluster to report ready (control-plane node `Ready`, up to 10 minutes).
@@ -214,6 +221,11 @@ built-in per-resource **restart** command (`KnownResourceCommands.RestartCommand
 command available from the dashboard's resource context menu — for **only that resource**. No
 image is rebuilt, no other component restarts, and the Kind cluster is untouched.
 
+`AddGoApp` does not imply source watching. This subscriber is therefore intentionally retained:
+it subscribes to Aspire's `AfterResourcesCreatedEvent`, then installs the narrowly scoped watchers
+below and invokes the existing command annotation without casting the resource to an executable
+type. That keeps selective restart working with `GoAppResource`.
+
 | Source directory watched         | Resource restarted            |
 |-----------------------------------|--------------------------------|
 | `controller/`                     | `application-controller`      |
@@ -237,18 +249,24 @@ Hot Module Replacement continues to work exactly as it does when you run `pnpm s
 editing a `.tsx`/`.scss` file under `ui/src` hot-reloads in the browser without any Aspire
 involvement or process restart.
 
+The Aspire dashboard captures the UI resource's process stdout/stderr. Browser-side console output
+still belongs to the browser developer tools; this sample does not inject Aspire browser-log
+forwarding into Argo CD's webpack application.
+
 Before first start, [`ArgoCdUiDependencies.EnsureInstalledOrThrow`](ArgoCd.Aspire.AppHost/ArgoCdUiDependencies.cs)
 runs a pinned `corepack pnpm install` if `ui/node_modules` is missing or older than
 `ui/pnpm-lock.yaml`, so you don't need to remember to install UI dependencies by hand. Set
 `ARGOCD_ASPIRE_SKIP_UI_INSTALL=true` to skip this check (e.g. if you're managing `node_modules`
 yourself or working offline with dependencies already installed).
 
-## Debugging in Visual Studio
+## Go debugging and observability
 
-Press **F5** on the AppHost project. Because every Argo CD component runs as a real `go run`
-host process (not inside a container), you can additionally attach Delve or VS Code's Go debugger
-to any component's process the moment it starts — no `kubectl exec`, no remote debug proxy,
-no container. The Aspire dashboard's **Console logs** view streams stdout/stderr per resource; use
+Press **F5** on the AppHost project or launch it with `aspire start`. `Aspire.Hosting.Go` provides
+the supported VS Code/Delve launch integration for each `GoAppResource`; a separately exposed
+headless Delve port is not enabled by default. Because every component is a host process, you can
+also attach an existing Delve-capable debugger directly — no `kubectl exec`, remote container
+proxy, or image rebuild. The Aspire dashboard's **Console logs** view streams stdout/stderr per
+resource; use
 the **Traces**/**Structured logs** views for OpenTelemetry data on components that emit OTLP (the
 API server, controllers, and repo-server export standard Argo CD metrics/traces when OTLP
 environment variables are set, same as running them by hand).
@@ -263,21 +281,38 @@ the `argocd-dev` cluster resource — it reads the `argocd-initial-admin-secret`
 identically on Windows/macOS/Linux). If the Secret doesn't exist (the normal case for this dev
 loop), the command reports "no admin password required" instead of an error.
 
+## Current Aspire eventing and cleanup
+
+The sample uses Aspire's current eventing model rather than the removed/deprecated
+`IDistributedApplicationLifecycleHook` pattern:
+
+- the vendored Kind integration creates/reuses clusters on `BeforeStartEvent`, performs readiness
+  and post-deploy work on `AfterResourcesCreatedEvent`, and publishes a cluster-scoped
+  `KindClusterReadyEvent` only after that work succeeds;
+- the Argo CD state bootstrap subscribes to that precise cluster event, applies the namespace and
+  state manifests, and completes the cluster's health check; dependent resources continue to use
+  `WaitFor(cluster)`;
+- selective source restart subscribes to `AfterResourcesCreatedEvent`;
+- an awaited hosted-service stop callback deletes ephemeral Kind clusters. Persistent clusters,
+  including this sample's `argocd-dev` cluster, are intentionally left running.
+
+This custom cluster-ready event avoids a circular wait: the cluster's overall `ResourceReadyEvent`
+cannot fire until the Argo CD bootstrap health check is healthy, while the bootstrap itself must
+start only after Kind's own readiness/post-deploy phase has completed.
+
 ## Cleanup
 
-The Kind cluster is deliberately **persistent** across `dotnet run` invocations (see
+The Kind cluster is deliberately **persistent** across `aspire start` invocations (see
 [Kind holds state only](#kind-holds-state-only)) so you don't pay cluster-creation cost every
 time you iterate. To delete it, use the **`Delete Kind cluster (clean shutdown)`** dashboard
 command on the `argocd-dev` resource (or `aspire resource argocd-dev delete-cluster` from the CLI)
 **before** stopping the AppHost.
 
-> **Why not just stop the AppHost?** The Kind hosting integration's own shutdown hook does delete
-> the cluster on `BeforeStopAsync`, but on the Aspire CLI/host combination used here, `aspire stop`
-> has been observed to hard-kill the AppHost process a few milliseconds after requesting shutdown
-> — before that asynchronous `kind delete cluster` (which takes several seconds) can finish. Aspire
-> resource **commands**, unlike process shutdown, are awaited to completion by the CLI/dashboard,
-> so running `delete-cluster` explicitly avoids that race and reliably deletes the cluster and its
-> kubeconfig file. If you forget and just stop the AppHost, first find the real `kind` cluster name
+> **Why not just stop the AppHost?** This cluster has a persistent resource lifetime, so normal
+> AppHost shutdown deliberately leaves it running. Aspire resource **commands** are awaited to
+> completion by the CLI/dashboard, so running `delete-cluster` explicitly reliably deletes the
+> cluster and its kubeconfig file. If you forget and just stop the AppHost, first find the real
+> `kind` cluster name
 > — it is **not** the literal `argocd-dev` (see
 > [The Kind cluster name is derived per-checkout](#the-kind-cluster-name-is-derived-per-checkout-not-a-shared-literal)) —
 > via the `argocd.clusterName` dashboard property, `kind get clusters` (look for the
@@ -335,7 +370,7 @@ build, RBAC, resource limits, sidecar interactions, etc.) rather than as a host 
 
 This is the **only** place in the AppHost that performs a Docker image build, `kind load`, or a
 Kubernetes Deployment patch — it is a manual, opt-in dashboard command, never invoked automatically
-by `dotnet run`, and it's independent of (and doesn't interfere with) the host-process
+by `aspire start`, and it's independent of (and doesn't interfere with) the host-process
 `repo-server` resource that runs by default.
 
 ## Prerequisites
@@ -362,6 +397,7 @@ never blocks startup).
 ```
 contrib/aspire-dev/
 ├── README.md                              — this file
+├── ArgoCd.Aspire.slnx                     — Visual Studio/build entry point for all three projects
 ├── ArgoCd.Aspire.AppHost/
 │   ├── AppHost.cs                         — resource graph entry point
 │   ├── ArgoCdComponents.cs                — per-component host-process definitions (Procfile parity)
@@ -370,15 +406,16 @@ contrib/aspire-dev/
 │   ├── ArgoCdRepoRoot.cs                  — repo-root discovery (go.mod + manifests/install.yaml)
 │   ├── ArgoCdManifestSet.cs               — manifest file-set discovery for state bootstrap
 │   ├── ArgoCdManifestRenderer.cs          — shared process-execution helper
-│   ├── ArgoCdStateBootstrapHook.cs        — server-side-apply plan for CRDs/RBAC/ConfigMaps/Secrets
-│   ├── ArgoCdSelectiveRestartHook.cs      — FileSystemWatcher-based per-component restart
+│   ├── ArgoCdStateBootstrapHook.cs        — cluster-ready event subscriber + state apply plan
+│   ├── ArgoCdSelectiveRestartHook.cs      — event subscriber + selective Go source restart
 │   ├── ArgoCdUiDependencies.cs            — pinned pnpm install automation for the UI
 │   ├── AdminCredentialCommand.cs          — "Show admin credentials" dashboard command
 │   ├── DeleteClusterCommand.cs            — "Delete Kind cluster (clean shutdown)" dashboard command
 │   └── RepoServerOverride.cs              — optional in-cluster repo-server image override command
 ├── ArgoCd.Aspire.Hosting.Kind/            — vendored/local Kind hosting integration
 │   ├── KindClusterBuilderExtensions.cs
-│   ├── KindClusterLifecycleHook.cs
+│   ├── KindClusterLifecycleHook.cs         — event subscriber + awaited shutdown cleanup
+│   ├── KindClusterReadyEvent.cs
 │   └── KindClusterResource.cs
 └── ArgoCd.Aspire.AppHost.Tests/           — unit tests (see below)
 ```
@@ -386,11 +423,12 @@ contrib/aspire-dev/
 ## Tests
 
 ```powershell
-dotnet test contrib/aspire-dev/ArgoCd.Aspire.AppHost.Tests
+dotnet build contrib/aspire-dev/ArgoCd.Aspire.slnx
+dotnet test contrib/aspire-dev/ArgoCd.Aspire.slnx --no-build
 ```
 
 Covers: exact Procfile command/flag/env/port mapping per component
-(`ArgoCdComponentsTests`), cross-platform path resolution and env-var overrides
+and official `GoAppResource` API shape (`ArgoCdComponentsTests`), cross-platform path resolution and env-var overrides
 (`ArgoCdPathsTests`), prerequisite tool-check behavior (`ArgoCdPrerequisitesTests`), the
 state-bootstrap apply-order plan (`ArgoCdStateBootstrapHookTests`), selective-restart
 directory-to-resource mapping and debounce logic (`ArgoCdSelectiveRestartHookTests`), UI
@@ -409,7 +447,7 @@ their `internal` static/pure-logic entry points.
   Aspire limitation.
 - The `cmd/` shared entrypoints are not watched for selective restart (see
   [Editing code triggers a selective restart](#editing-code-triggers-a-selective-restart)).
-- `aspire stop` alone does not reliably delete the Kind cluster before the process exits; use the
-  `delete-cluster` dashboard command first (see [Cleanup](#cleanup)).
+- Normal stop intentionally retains the persistent Kind cluster; use the `delete-cluster`
+  dashboard command when you want to remove it (see [Cleanup](#cleanup)).
 - This loop assumes a local Docker daemon capable of running Kind's `kindest/node` container; it
   does not manage remote/cloud Docker contexts.

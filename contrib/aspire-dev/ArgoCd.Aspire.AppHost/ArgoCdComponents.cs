@@ -1,12 +1,13 @@
 // contrib/aspire-dev/ArgoCd.Aspire.AppHost/ArgoCdComponents.cs
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Go;
 
 namespace ArgoCd.Aspire.AppHost;
 
 /// <summary>
 /// Extension methods that add the native, working-tree Argo CD Go components as Aspire
-/// executable resources.
+/// Go application resources.
 ///
 /// Each method mirrors the corresponding <c>Procfile</c> entry as closely as possible: the same
 /// <c>go run ./cmd/main.go</c> invocation, the same environment variables, and the same literal
@@ -14,9 +15,10 @@ namespace ArgoCd.Aspire.AppHost;
 /// replaced with the cross-platform temp paths from <see cref="ArgoCdPaths"/> so the loop works
 /// on Windows/macOS/Linux alike.
 ///
-/// These are plain "go run" host processes: no Docker image build, no cross-compilation, no
-/// <c>make</c>, and no POSIX shell wrapper are involved. Go's build cache makes repeated
-/// <c>go run</c> invocations fast after the first run.
+/// These are official Aspire <see cref="GoAppResource"/> host processes: no Docker image build,
+/// no cross-compilation, no <c>make</c>, and no POSIX shell wrapper are involved. Aspire launches
+/// the exact <c>go run ./cmd/main.go</c> package and provides its standard Delve/VS Code debugging
+/// integration. Go's build cache makes repeated invocations fast after the first run.
 ///
 /// Two Procfile behaviors are intentionally simplified for the local dev loop and documented in
 /// the README:
@@ -29,18 +31,17 @@ namespace ArgoCd.Aspire.AppHost;
 /// </summary>
 internal static class ArgoCdComponents
 {
-    private const string GoCommand = "go";
+    private const string PackagePath = "./cmd/main.go";
 
     /// <summary>
     /// Application controller (Procfile: <c>controller</c>). Source: <c>controller/</c>.
     /// </summary>
-    public static IResourceBuilder<ExecutableResource> AddArgoCdApplicationController(
+    public static IResourceBuilder<GoAppResource> AddArgoCdApplicationController(
         this IDistributedApplicationBuilder builder, string repoRoot, IResourceBuilder<RedisResource> redis)
     {
         const string component = "app-controller";
         var args = new List<string>
         {
-            "run", "./cmd/main.go",
             "--loglevel", "debug",
             "--redis", "localhost:6379",
             "--repo-server", "localhost:8081",
@@ -54,7 +55,8 @@ internal static class ArgoCdComponents
         var coverageDir = ArgoCdPaths.CoverageDir(component);
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
-        return builder.AddExecutable("application-controller", GoCommand, repoRoot, args.ToArray())
+        return builder.AddGoApp("application-controller", repoRoot, PackagePath)
+            .WithAppArgs(args.Cast<object>().ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_TLS_DATA_PATH", ArgoCdPaths.TlsDataPath)
             .WithEnvironment("ARGOCD_SSH_DATA_PATH", ArgoCdPaths.SshDataPath)
@@ -68,13 +70,12 @@ internal static class ArgoCdComponents
     /// <summary>
     /// API server (Procfile: <c>api-server</c>). Source: <c>server/</c>.
     /// </summary>
-    public static IResourceBuilder<ExecutableResource> AddArgoCdApiServer(
+    public static IResourceBuilder<GoAppResource> AddArgoCdApiServer(
         this IDistributedApplicationBuilder builder, string repoRoot, IResourceBuilder<RedisResource> redis)
     {
         const string component = "api-server";
         var args = new List<string>
         {
-            "run", "./cmd/main.go",
             "--loglevel", "debug",
             "--redis", "localhost:6379",
             "--disable-auth", "true",
@@ -90,7 +91,8 @@ internal static class ArgoCdComponents
         var coverageDir = ArgoCdPaths.CoverageDir(component);
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
-        return builder.AddExecutable("api-server", GoCommand, repoRoot, args.ToArray())
+        return builder.AddGoApp("api-server", repoRoot, PackagePath)
+            .WithAppArgs(args.Cast<object>().ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_TLS_DATA_PATH", ArgoCdPaths.TlsDataPath)
             .WithEnvironment("ARGOCD_SSH_DATA_PATH", ArgoCdPaths.SshDataPath)
@@ -104,13 +106,12 @@ internal static class ArgoCdComponents
     /// <summary>
     /// Repo server (Procfile: <c>repo-server</c>). Source: <c>reposerver/</c>.
     /// </summary>
-    public static IResourceBuilder<ExecutableResource> AddArgoCdRepoServer(
+    public static IResourceBuilder<GoAppResource> AddArgoCdRepoServer(
         this IDistributedApplicationBuilder builder, string repoRoot, IResourceBuilder<RedisResource> redis)
     {
         const string component = "repo-server";
         var args = new List<string>
         {
-            "run", "./cmd/main.go",
             "--loglevel", "debug",
             "--port", "8081",
             "--redis", "localhost:6379",
@@ -124,7 +125,8 @@ internal static class ArgoCdComponents
         ArgoCdPaths.EnsureDirectoryExists(ArgoCdPaths.TlsDataPath);
         ArgoCdPaths.EnsureDirectoryExists(ArgoCdPaths.SshDataPath);
 
-        var resource = builder.AddExecutable("repo-server", GoCommand, repoRoot, args.ToArray())
+        var resource = builder.AddGoApp("repo-server", repoRoot, PackagePath)
+            .WithAppArgs(args.Cast<object>().ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_GNUPGHOME", ArgoCdPaths.GpgKeysPath)
             .WithEnvironment("ARGOCD_PLUGINSOCKFILEPATH", ArgoCdPaths.CmpPluginSocketPath(repoRoot))
@@ -156,13 +158,12 @@ internal static class ArgoCdComponents
     /// Note: the Procfile entry for commit-server does not set <c>ARGOCD_FAKE_IN_CLUSTER</c> or
     /// the TLS/SSH data paths, so this method matches that omission exactly.
     /// </summary>
-    public static IResourceBuilder<ExecutableResource> AddArgoCdCommitServer(
+    public static IResourceBuilder<GoAppResource> AddArgoCdCommitServer(
         this IDistributedApplicationBuilder builder, string repoRoot)
     {
         const string component = "commit-server";
         var args = new List<string>
         {
-            "run", "./cmd/main.go",
             "--loglevel", "debug",
             "--port", "8086",
         };
@@ -170,7 +171,8 @@ internal static class ArgoCdComponents
         var coverageDir = ArgoCdPaths.CoverageDir(component);
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
-        return builder.AddExecutable("commit-server", GoCommand, repoRoot, args.ToArray())
+        return builder.AddGoApp("commit-server", repoRoot, PackagePath)
+            .WithAppArgs(args.Cast<object>().ToArray())
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-commit-server")
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
@@ -180,13 +182,12 @@ internal static class ArgoCdComponents
     /// <summary>
     /// ApplicationSet controller (Procfile: <c>applicationset-controller</c>). Source: <c>applicationset/</c>.
     /// </summary>
-    public static IResourceBuilder<ExecutableResource> AddArgoCdApplicationSetController(
+    public static IResourceBuilder<GoAppResource> AddArgoCdApplicationSetController(
         this IDistributedApplicationBuilder builder, string repoRoot)
     {
         const string component = "applicationset-controller";
         var args = new List<string>
         {
-            "run", "./cmd/main.go",
             "--loglevel", "debug",
             "--metrics-addr", "localhost:12345",
             "--probe-addr", "localhost:12346",
@@ -197,7 +198,8 @@ internal static class ArgoCdComponents
         var coverageDir = ArgoCdPaths.CoverageDir(component);
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
-        return builder.AddExecutable("applicationset-controller", GoCommand, repoRoot, args.ToArray())
+        return builder.AddGoApp("applicationset-controller", repoRoot, PackagePath)
+            .WithAppArgs(args.Cast<object>().ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_TLS_DATA_PATH", ArgoCdPaths.TlsDataPath)
             .WithEnvironment("ARGOCD_SSH_DATA_PATH", ArgoCdPaths.SshDataPath)
@@ -216,13 +218,12 @@ internal static class ArgoCdComponents
     /// Note: the Procfile entry for notifications does not set <c>ARGOCD_SSH_DATA_PATH</c>, so
     /// this method matches that omission exactly.
     /// </summary>
-    public static IResourceBuilder<ExecutableResource> AddArgoCdNotificationsController(
+    public static IResourceBuilder<GoAppResource> AddArgoCdNotificationsController(
         this IDistributedApplicationBuilder builder, string repoRoot)
     {
         const string component = "notification";
         var args = new List<string>
         {
-            "run", "./cmd/main.go",
             "--loglevel", "debug",
         };
         AppendFlagWithDefault(args, "--application-namespaces", "ARGOCD_APPLICATION_NAMESPACES", "");
@@ -231,7 +232,8 @@ internal static class ArgoCdComponents
         var coverageDir = ArgoCdPaths.CoverageDir(component);
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
-        return builder.AddExecutable("notifications-controller", GoCommand, repoRoot, args.ToArray())
+        return builder.AddGoApp("notifications-controller", repoRoot, PackagePath)
+            .WithAppArgs(args.Cast<object>().ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_TLS_DATA_PATH", ArgoCdPaths.TlsDataPath)
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-notifications")
@@ -247,7 +249,7 @@ internal static class ArgoCdComponents
     /// the same way as Linux/macOS. This resource is therefore opt-in only (never added by
     /// default) and is refused with an actionable error on Windows. See README "CMP" section.
     /// </summary>
-    public static IResourceBuilder<ExecutableResource> AddArgoCdCmpServer(
+    public static IResourceBuilder<GoAppResource> AddArgoCdCmpServer(
         this IDistributedApplicationBuilder builder, string repoRoot)
     {
         if (OperatingSystem.IsWindows())
@@ -262,13 +264,13 @@ internal static class ArgoCdComponents
 
         var args = new List<string>
         {
-            "run", "./cmd/main.go",
             "--config-dir-path", "./test/cmp",
             "--loglevel", "debug",
         };
         AppendFlagIfEnvSet(args, "--otlp-address", "ARGOCD_OTLP_ADDRESS");
 
-        return builder.AddExecutable("cmp-server", GoCommand, repoRoot, args.ToArray())
+        return builder.AddGoApp("cmp-server", repoRoot, PackagePath)
+            .WithAppArgs(args.Cast<object>().ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-cmp-server")
             .WithEnvironment("ARGOCD_PLUGINSOCKFILEPATH", ArgoCdPaths.CmpPluginSocketPath(repoRoot))
@@ -310,8 +312,8 @@ internal static class ArgoCdComponents
     /// password-less development default configured in <c>AppHost.cs</c>), this is a no-op,
     /// matching the Procfile's own password-less local default.
     /// </summary>
-    private static IResourceBuilder<ExecutableResource> WithRedisPassword(
-        this IResourceBuilder<ExecutableResource> resource,
+    private static IResourceBuilder<GoAppResource> WithRedisPassword(
+        this IResourceBuilder<GoAppResource> resource,
         IDistributedApplicationBuilder builder,
         IResourceBuilder<RedisResource> redis)
     {

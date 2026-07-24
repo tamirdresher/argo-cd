@@ -1,4 +1,5 @@
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Lifecycle;
 using ArgoCd.Aspire.AppHost;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -8,7 +9,7 @@ namespace ArgoCd.Aspire.AppHost.Tests;
 /// <summary>
 /// Covers <see cref="ArgoCdSelectiveRestartHook"/>'s directory-to-resource-name mapping (the exact
 /// data that makes "editing repo-server's Go source restarts only repo-server" true) and its
-/// <see cref="IDistributedApplicationLifecycleHook.AfterResourcesCreatedAsync"/> behavior against
+/// <see cref="IDistributedApplicationEventingSubscriber"/> handler behavior against
 /// this repository's real, on-disk component directories.
 ///
 /// <see cref="FileSystemWatcher"/>-driven event delivery and the DI-resolved restart-command
@@ -73,6 +74,14 @@ public sealed class ArgoCdSelectiveRestartHookTests
         // coalesces them into exactly one restart. Asserting the exact value guards against an
         // accidental change silently making restarts noticeably slower or too eager.
         Assert.Equal(TimeSpan.FromMilliseconds(500), ArgoCdSelectiveRestartHook.DebounceWindow);
+    }
+
+    [Fact]
+    public void Hook_UsesCurrentAspireEventingSubscriberShape()
+    {
+        Assert.True(
+            typeof(IDistributedApplicationEventingSubscriber)
+                .IsAssignableFrom(typeof(ArgoCdSelectiveRestartHook)));
     }
 
     [Fact]

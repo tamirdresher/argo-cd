@@ -1,7 +1,7 @@
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Lifecycle;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
 
 namespace Aspire.Hosting;
@@ -58,10 +58,17 @@ public static class KindClusterBuilderExtensions
 
         var resource = new KindClusterResource(name, resolvedClusterName, resolvedKubeconfigPath);
 
-        // TryAddEnumerable is idempotent: if AddKindCluster is called multiple times, only
-        // one KindClusterLifecycleHook singleton is registered.
-        builder.Services.TryAddEnumerable(
-            ServiceDescriptor.Singleton<IDistributedApplicationLifecycleHook, KindClusterLifecycleHook>());
+        // Register one shared subscriber/hosted-service instance even when multiple clusters are
+        // added. Eventing owns startup/post-deploy ordering; IHostedService owns awaited shutdown
+        // cleanup because Aspire has no global "before stop" application event.
+        if (!builder.Services.Any(descriptor => descriptor.ServiceType == typeof(KindClusterLifecycleHook)))
+        {
+            builder.Services.AddSingleton<KindClusterLifecycleHook>();
+            builder.Services.AddSingleton<IDistributedApplicationEventingSubscriber>(
+                services => services.GetRequiredService<KindClusterLifecycleHook>());
+            builder.Services.AddSingleton<IHostedService>(
+                services => services.GetRequiredService<KindClusterLifecycleHook>());
+        }
 
         var resourceBuilder = builder.AddResource(resource);
 
@@ -512,7 +519,7 @@ public static class KindClusterBuilderExtensions
     /// discards the previous run's state.
     /// </para>
     /// <para>
-    /// When <paramref name="persistent"/> is <c>true</c>, the lifecycle hook will:
+    /// When <paramref name="persistent"/> is <c>true</c>, the eventing subscriber will:
     /// <list type="bullet">
     /// <item>On start: if a healthy same-named cluster already exists, reuse it (skip delete +
     /// re-create) and only refresh the kubeconfig file via <c>kind export kubeconfig</c>. If no
