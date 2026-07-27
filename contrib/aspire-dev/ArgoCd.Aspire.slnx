@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ArgoCd.Aspire.Hosting.Kind.Extensions/ArgoCd.Aspire.Hosting.Kind.Extensions.csproj" />
+  <Project Path="ArgoCd.Aspire.AppHost/ArgoCd.Aspire.AppHost.csproj" />
+  <Project Path="ArgoCd.Aspire.AppHost.Tests/ArgoCd.Aspire.AppHost.Tests.csproj" />
+</Solution>

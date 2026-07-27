@@ -38,3 +38,10 @@ cmd/argocd-server/argocd-server
 # ignore generated `.argocd-helm-dep-up` marker file; this should not be committed to git
 reposerver/repository/testdata/**/.argocd-helm-dep-up
 .claude
+
+# contrib/aspire-dev (.NET Aspire + Kind local dev environment)
+contrib/aspire-dev/**/bin/
+contrib/aspire-dev/**/obj/
+contrib/aspire-dev/**/*.user
+# Aspire CLI local state (records the last-used AppHost path on this machine)
+/aspire.config.json

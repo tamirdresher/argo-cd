@@ -1,0 +1,39 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.4.6">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>argocd-aspire-kind-dev</UserSecretsId>
+    <ArgoCdRepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../..'))</ArgoCdRepoRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ArgoCdRepoRoot</_Parameter1>
+      <_Parameter2>$(ArgoCdRepoRoot)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArgoCd.Aspire.Hosting.Kind.Extensions\ArgoCd.Aspire.Hosting.Kind.Extensions.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting.Go" Version="13.4.6-preview.1.26319.6" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="13.4.6" />
+    <PackageReference Include="CommunityToolkit.Aspire.Hosting.Kind" Version="13.4.1-beta.687" />
+  </ItemGroup>
+
+  <!--
+    Exclude the sibling test project from this AppHost's compile glob. The
+    Aspire.AppHost.Sdk defaults to **/*.cs; without this exclusion it would try
+    to compile the xunit-dependent test files as part of the AppHost itself.
+  -->
+  <ItemGroup>
+    <Compile Remove="..\ArgoCd.Aspire.AppHost.Tests\**\*.cs" />
+  </ItemGroup>
+
+</Project>

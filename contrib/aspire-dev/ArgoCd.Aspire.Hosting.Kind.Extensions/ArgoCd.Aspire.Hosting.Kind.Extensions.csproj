@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsAspireProjectResource>false</IsAspireProjectResource>
+    <Description>Missing-pieces extensions on top of CommunityToolkit.Aspire.Hosting.Kind for dev-loop scenarios.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Aspire.Hosting.Kind" Version="13.4.1-beta.687" />
+  </ItemGroup>
+
+</Project>

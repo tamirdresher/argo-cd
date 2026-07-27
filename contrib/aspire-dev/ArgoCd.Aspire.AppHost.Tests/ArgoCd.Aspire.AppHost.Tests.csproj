@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <ArgoCdRepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../..'))</ArgoCdRepoRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ArgoCdRepoRoot</_Parameter1>
+      <_Parameter2>$(ArgoCdRepoRoot)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compile the AppHost's plain helper classes directly; the AppHost project itself
+         cannot be referenced as a ProjectReference because Aspire.AppHost.Sdk projects are
+         not ordinary class libraries. -->
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdManifestRenderer.cs" Link="AppHost\ArgoCdManifestRenderer.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\RepoServerOverride.cs" Link="AppHost\RepoServerOverride.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\DeleteClusterCommand.cs" Link="AppHost\DeleteClusterCommand.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdPaths.cs" Link="AppHost\ArgoCdPaths.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdPrerequisites.cs" Link="AppHost\ArgoCdPrerequisites.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdManifestSet.cs" Link="AppHost\ArgoCdManifestSet.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdRepository.cs" Link="AppHost\ArgoCdRepository.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdComponents.cs" Link="AppHost\ArgoCdComponents.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdSelectiveRestartHook.cs" Link="AppHost\ArgoCdSelectiveRestartHook.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\AdminCredentialCommand.cs" Link="AppHost\AdminCredentialCommand.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdUiDependencies.cs" Link="AppHost\ArgoCdUiDependencies.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdClusterName.cs" Link="AppHost\ArgoCdClusterName.cs" />
+    <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdDex.cs" Link="AppHost\ArgoCdDex.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting.Go" Version="13.4.6-preview.1.26319.6" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="13.4.6" />
+    <PackageReference Include="CommunityToolkit.Aspire.Hosting.Kind" Version="13.4.1-beta.687" />
+  </ItemGroup>
+
+
+</Project>
