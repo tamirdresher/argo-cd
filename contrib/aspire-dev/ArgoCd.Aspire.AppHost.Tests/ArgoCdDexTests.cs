@@ -110,7 +110,7 @@ public sealed class ArgoCdDexTests
 
         var args = await GetArgsAsync(gendexcfg);
         Assert.Equal(
-            new[] { "run", "./cmd/main.go", "gendexcfg", "-o", dexConfigPath, "--kubeconfig", cluster.Resource.KubeconfigPath, "-n", "argocd" },
+            new[] { "run", "./cmd", "gendexcfg", "-o", dexConfigPath, "--kubeconfig", cluster.Resource.KubeconfigPath, "-n", "argocd" },
             args);
 
         var env = await GetEnvironmentAsync(gendexcfg);

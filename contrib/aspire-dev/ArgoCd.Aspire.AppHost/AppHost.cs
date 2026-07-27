@@ -6,7 +6,7 @@
 // ArgoCdManifestSet). It never runs a released Argo CD Deployment,
 // StatefulSet, or Service. Instead, every Argo CD component that the repository's own Procfile
 // would launch runs here as a native Aspire executable resource: the exact same `go run
-// ./cmd/main.go ...` command, environment variables (including ARGOCD_FAKE_IN_CLUSTER=true), and
+// ./cmd ...` command, environment variables (including ARGOCD_FAKE_IN_CLUSTER=true), and
 // ports as Procfile, so `aspire start` (or Visual Studio F5) replaces `make start` / `goreman start`
 // / `tilt up` for day-to-day development without ever requiring `make`, a POSIX shell, a Linux
 // cross-compiled binary, `docker build`, or `kind load docker-image`.
@@ -162,7 +162,7 @@ builder
     .AddGoApp(
         "dev-mounter",
         repoRoot,
-        "hack/dev-mounter/main.go")
+        "hack/dev-mounter")
     .WithKindEnvironment(cluster)
     .WithAppArgs(
         "--kubeconfig", cluster.Resource.KubeconfigPath,

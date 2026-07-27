@@ -47,7 +47,7 @@ internal static class ArgoCdDex
         IResourceBuilder<KindClusterResource> cluster)
     {
         return builder
-            .AddGoApp("gendexcfg", ArgoCdRepository.Root, "./cmd/main.go")
+            .AddGoApp("gendexcfg", ArgoCdRepository.Root, "./cmd")
             .WithAppArgs(
                 "gendexcfg",
                 "-o", dexConfigPath,

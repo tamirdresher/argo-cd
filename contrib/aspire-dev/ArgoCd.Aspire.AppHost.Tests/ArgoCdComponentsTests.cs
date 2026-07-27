@@ -97,7 +97,7 @@ public sealed class ArgoCdComponentsTests
         var args = await GetArgsAsync(resource);
         Assert.Equal(new[]
         {
-            "run", "./cmd/main.go",
+            "run", "./cmd",
             "--loglevel", "debug",
             "--redis", "localhost:6379",
             "--repo-server", "localhost:8081",
@@ -132,7 +132,7 @@ public sealed class ArgoCdComponentsTests
         var args = await GetArgsAsync(resource);
         Assert.Equal(new[]
         {
-            "run", "./cmd/main.go",
+            "run", "./cmd",
             "--loglevel", "debug",
             "--redis", "localhost:6379",
             "--disable-auth=true",
@@ -168,7 +168,7 @@ public sealed class ArgoCdComponentsTests
         var args = await GetArgsAsync(resource);
         Assert.Equal(new[]
         {
-            "run", "./cmd/main.go",
+            "run", "./cmd",
             "--loglevel", "debug",
             "--port", "8081",
             "--redis", "localhost:6379",
@@ -201,7 +201,7 @@ public sealed class ArgoCdComponentsTests
         Assert.Equal("commit-server", resource.Resource.Name);
 
         var args = await GetArgsAsync(resource);
-        Assert.Equal(new[] { "run", "./cmd/main.go", "--loglevel", "debug", "--port", "8086" }, args);
+        Assert.Equal(new[] { "run", "./cmd", "--loglevel", "debug", "--port", "8086" }, args);
 
         var env = await GetEnvironmentAsync(resource);
         Assert.Equal("argocd-commit-server", env["ARGOCD_BINARY_NAME"]);
@@ -227,7 +227,7 @@ public sealed class ArgoCdComponentsTests
         var args = await GetArgsAsync(resource);
         Assert.Equal(new[]
         {
-            "run", "./cmd/main.go",
+            "run", "./cmd",
             "--loglevel", "debug",
             "--metrics-addr", "localhost:12345",
             "--probe-addr", "localhost:12346",
@@ -260,7 +260,7 @@ public sealed class ArgoCdComponentsTests
         var args = await GetArgsAsync(resource);
         Assert.Equal(new[]
         {
-            "run", "./cmd/main.go",
+            "run", "./cmd",
             "--loglevel", "debug",
             "--application-namespaces=",
             "--self-service-notification-enabled=false",
@@ -292,7 +292,7 @@ public sealed class ArgoCdComponentsTests
             Assert.Equal("cmp-server", resource.Resource.Name);
 
             var args = await GetArgsAsync(resource);
-            Assert.Equal(new[] { "run", "./cmd/main.go", "--config-dir-path", "./test/cmp", "--loglevel", "debug" }, args);
+            Assert.Equal(new[] { "run", "./cmd", "--config-dir-path", "./test/cmp", "--loglevel", "debug" }, args);
 
             var env = await GetEnvironmentAsync(resource);
             Assert.Equal("true", env["ARGOCD_FAKE_IN_CLUSTER"]);

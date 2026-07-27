@@ -10,14 +10,14 @@ namespace ArgoCd.Aspire.AppHost;
 /// Go application resources.
 ///
 /// Each method mirrors the corresponding <c>Procfile</c> entry as closely as possible: the same
-/// <c>go run ./cmd/main.go</c> invocation, the same environment variables, and the same literal
+/// <c>go run ./cmd</c> invocation, the same environment variables, and the same literal
 /// ports — except that the Procfile's hardcoded <c>/tmp/argocd-local</c>-style defaults are
 /// replaced with the cross-platform temp paths from <see cref="ArgoCdPaths"/> so the loop works
 /// on Windows/macOS/Linux alike.
 ///
 /// These are official Aspire <see cref="GoAppResource"/> host processes: no Docker image build,
 /// no cross-compilation, no <c>make</c>, and no POSIX shell wrapper are involved. Aspire launches
-/// the exact <c>go run ./cmd/main.go</c> package and provides its standard Delve/VS Code debugging
+/// the exact <c>go run ./cmd</c> package and provides its standard Delve/VS Code debugging
 /// integration. Go's build cache makes repeated invocations fast after the first run.
 ///
 /// Two Procfile behaviors are intentionally simplified for the local dev loop and documented in
@@ -31,7 +31,7 @@ namespace ArgoCd.Aspire.AppHost;
 /// </summary>
 internal static class ArgoCdComponents
 {
-    private const string PackagePath = "./cmd/main.go";
+    private const string PackagePath = "./cmd";
 
     /// <summary>
     /// Application controller (Procfile: <c>controller</c>). Source: <c>controller/</c>.
