@@ -45,3 +45,6 @@ contrib/aspire-dev/**/obj/
 contrib/aspire-dev/**/*.user
 # Aspire CLI local state (records the last-used AppHost path on this machine)
 /aspire.config.json
+
+# Delve debug binaries left behind by 'dlv debug' / VS Code F5 sessions
+__debug_bin*
