@@ -34,7 +34,10 @@ using ArgoCd.Aspire.AppHost;
 // Fail fast with actionable remediation text before creating any resources: Docker, kind,
 // kubectl, and Go are hard prerequisites; Node/corepack are checked (pnpm soft-checked) since
 // the UI resource below needs them.
-ArgoCdPrerequisites.ValidateOrThrow();
+if (!IsTruthy(ArgoCdPrerequisites.SkipEnvironmentVariable))
+{
+    ArgoCdPrerequisites.ValidateOrThrow();
+}
 
 var builder = DistributedApplication.CreateBuilder(args);
 

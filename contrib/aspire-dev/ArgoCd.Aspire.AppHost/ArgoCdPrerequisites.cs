@@ -9,6 +9,8 @@ namespace ArgoCd.Aspire.AppHost;
 /// </summary>
 public static class ArgoCdPrerequisites
 {
+    public const string SkipEnvironmentVariable = "ARGOCD_ASPIRE_SKIP_PREREQUISITE_CHECKS";
+
     /// <summary>
     /// Runs all prerequisite checks and throws <see cref="InvalidOperationException"/> with a
     /// combined, actionable message if any are missing. Intended to be called once, synchronously,

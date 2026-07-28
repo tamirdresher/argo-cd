@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
     <ArgoCdRepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../..'))</ArgoCdRepoRoot>
   </PropertyGroup>
 
@@ -17,15 +18,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Testing" Version="13.4.6" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Compile the AppHost's plain helper classes directly; the AppHost project itself
-         cannot be referenced as a ProjectReference because Aspire.AppHost.Sdk projects are
-         not ordinary class libraries. -->
+    <!-- Compile the AppHost's plain helper classes directly for focused unit tests. The
+         AppHost ProjectReference below is present so Aspire's testing builder can locate the
+         entry point. -->
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdManifestRenderer.cs" Link="AppHost\ArgoCdManifestRenderer.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\RepoServerOverride.cs" Link="AppHost\RepoServerOverride.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\DeleteClusterCommand.cs" Link="AppHost\DeleteClusterCommand.cs" />
@@ -43,6 +45,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ArgoCd.Aspire.Hosting.Kind.Extensions\ArgoCd.Aspire.Hosting.Kind.Extensions.csproj" />
+    <ProjectReference Include="..\ArgoCd.Aspire.AppHost\ArgoCd.Aspire.AppHost.csproj" IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup>
