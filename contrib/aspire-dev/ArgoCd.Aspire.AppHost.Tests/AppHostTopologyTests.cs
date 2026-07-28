@@ -29,6 +29,26 @@ public sealed class AppHostTopologyTests
         });
     }
 
+    [Fact]
+    public async Task ResourcesWithHttpEndpoints_HaveHealthChecks()
+    {
+        await using var builder = await CreateAppHostBuilderAsync();
+
+        var httpResources = builder.Resources
+            .Where(resource => resource.Annotations
+                .OfType<EndpointAnnotation>()
+                .Any(endpoint => endpoint.UriScheme == "http"))
+            .ToArray();
+
+        Assert.NotEmpty(httpResources);
+        Assert.All(httpResources, resource =>
+        {
+            Assert.Contains(
+                resource.Annotations.OfType<HealthCheckAnnotation>(),
+                healthCheck => !string.IsNullOrWhiteSpace(healthCheck.Key));
+        });
+    }
+
     private static async Task<IDistributedApplicationTestingBuilder> CreateAppHostBuilderAsync()
     {
         using var scope = new EnvironmentVariableScope(

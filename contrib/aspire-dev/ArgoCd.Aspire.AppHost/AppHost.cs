@@ -190,6 +190,7 @@ builder
     .AddExecutable("ui", pnpm.Command, uiDir, pnpm.Arguments.Concat(["start"]).ToArray())
     .WithEnvironment("ARGOCD_API_URL", apiServer.GetEndpoint("http"))
     .WithHttpEndpoint(port: 4000, targetPort: 4000, name: "http", isProxied: false)
+    .WithHttpHealthCheck("/")
     .WaitFor(apiServer);
 
 // ---------------------------------------------------------------------------------------------

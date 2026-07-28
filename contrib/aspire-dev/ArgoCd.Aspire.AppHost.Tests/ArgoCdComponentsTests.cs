@@ -62,6 +62,9 @@ public sealed class ArgoCdComponentsTests
     private static List<EndpointAnnotation> GetEndpoints(IResourceBuilder<GoAppResource> resourceBuilder) =>
         resourceBuilder.Resource.Annotations.OfType<EndpointAnnotation>().ToList();
 
+    private static bool HasHealthCheck(IResourceBuilder<GoAppResource> resourceBuilder) =>
+        resourceBuilder.Resource.Annotations.OfType<HealthCheckAnnotation>().Any();
+
     /// <summary>
     /// Like <see cref="GetEnvironmentAsync"/>, but returns the raw (unstringified) values placed
     /// into the environment dictionary by callback annotations. This is required to verify
@@ -154,6 +157,7 @@ public sealed class ArgoCdComponentsTests
         Assert.Equal(8080, http.Port);
         Assert.Equal(8080, http.TargetPort);
         Assert.False(http.IsProxied);
+        Assert.True(HasHealthCheck(resource));
     }
 
     [Fact]
@@ -185,11 +189,11 @@ public sealed class ArgoCdComponentsTests
         Assert.Equal("false", env["ARGOCD_GPG_ENABLED"]);
 
         var endpoints = GetEndpoints(resource);
-        var http = Assert.Single(endpoints);
-        Assert.Equal("http", http.Name);
-        Assert.Equal(8081, http.Port);
-        Assert.Equal(8081, http.TargetPort);
-        Assert.False(http.IsProxied);
+        Assert.Equal(2, endpoints.Count);
+        Assert.Contains(endpoints, e => e.Name == "http" && e.Port == 8081 && e.TargetPort == 8081);
+        Assert.Contains(endpoints, e => e.Name == "metrics" && e.Port == 8084 && e.TargetPort == 8084);
+        Assert.All(endpoints, e => Assert.False(e.IsProxied));
+        Assert.True(HasHealthCheck(resource));
     }
 
     [Fact]
@@ -211,9 +215,11 @@ public sealed class ArgoCdComponentsTests
         Assert.False(env.ContainsKey("ARGOCD_SSH_DATA_PATH"));
 
         var endpoints = GetEndpoints(resource);
-        var http = Assert.Single(endpoints);
-        Assert.Equal(8086, http.Port);
-        Assert.Equal(8086, http.TargetPort);
+        Assert.Equal(2, endpoints.Count);
+        Assert.Contains(endpoints, e => e.Name == "http" && e.Port == 8086 && e.TargetPort == 8086);
+        Assert.Contains(endpoints, e => e.Name == "metrics" && e.Port == 8087 && e.TargetPort == 8087);
+        Assert.All(endpoints, e => Assert.False(e.IsProxied));
+        Assert.True(HasHealthCheck(resource));
     }
 
     [Fact]
@@ -247,6 +253,7 @@ public sealed class ArgoCdComponentsTests
         Assert.Contains(endpoints, e => e.Name == "probe" && e.Port == 12346 && e.TargetPort == 12346);
         Assert.Contains(endpoints, e => e.Name == "webhook" && e.Port == 7001 && e.TargetPort == 7001);
         Assert.All(endpoints, e => Assert.False(e.IsProxied));
+        Assert.True(HasHealthCheck(resource));
     }
 
     [Fact]

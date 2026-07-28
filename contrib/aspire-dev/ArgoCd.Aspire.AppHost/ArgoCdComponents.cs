@@ -100,6 +100,7 @@ internal static class ArgoCdComponents
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
             .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "http", isProxied: false)
+            .WithHttpHealthCheck("/api/version")
             .WithRedisPassword(builder, redis);
     }
 
@@ -138,6 +139,8 @@ internal static class ArgoCdComponents
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
             .WithHttpEndpoint(port: 8081, targetPort: 8081, name: "http", isProxied: false)
+            .WithHttpEndpoint(port: 8084, targetPort: 8084, name: "metrics", isProxied: false)
+            .WithHttpHealthCheck("/healthz", endpointName: "metrics")
             .WithRedisPassword(builder, redis);
 
         // Optional passthrough matching the Procfile's `export GIT_CONFIG_GLOBAL=$ARGOCD_GIT_CONFIG`
@@ -176,7 +179,9 @@ internal static class ArgoCdComponents
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-commit-server")
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
-            .WithHttpEndpoint(port: 8086, targetPort: 8086, name: "http", isProxied: false);
+            .WithHttpEndpoint(port: 8086, targetPort: 8086, name: "http", isProxied: false)
+            .WithHttpEndpoint(port: 8087, targetPort: 8087, name: "metrics", isProxied: false)
+            .WithHttpHealthCheck("/healthz", endpointName: "metrics");
     }
 
     /// <summary>
@@ -210,7 +215,8 @@ internal static class ArgoCdComponents
             .WithEnvironment("FORCE_LOG_COLORS", "4")
             .WithHttpEndpoint(port: 12345, targetPort: 12345, name: "metrics", isProxied: false)
             .WithHttpEndpoint(port: 12346, targetPort: 12346, name: "probe", isProxied: false)
-            .WithHttpEndpoint(port: 7001, targetPort: 7001, name: "webhook", isProxied: false);
+            .WithHttpEndpoint(port: 7001, targetPort: 7001, name: "webhook", isProxied: false)
+            .WithHttpHealthCheck("/metrics", endpointName: "metrics");
     }
 
     /// <summary>
