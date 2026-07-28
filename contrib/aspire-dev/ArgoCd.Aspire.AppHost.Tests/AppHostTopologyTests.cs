@@ -1,5 +1,6 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Go;
 using Aspire.Hosting.Testing;
 using Xunit;
 
@@ -14,24 +15,18 @@ public sealed class AppHostTopologyTests
         await using var builder = await CreateAppHostBuilderAsync();
 
         var cluster = Assert.Single(builder.Resources, r => r.Name.StartsWith("argocd-dev-", StringComparison.Ordinal));
-        var componentsThatReadClusterState = new[]
-        {
-            "repo-server",
-            "api-server",
-            "application-controller",
-            "applicationset-controller",
-            "notifications-controller",
-            "dev-mounter",
-        };
+        var clusterReaders = builder.Resources
+            .OfType<GoAppResource>()
+            .Where(ReceivesKubeconfig)
+            .ToArray();
 
-        foreach (var componentName in componentsThatReadClusterState)
+        Assert.NotEmpty(clusterReaders);
+        Assert.All(clusterReaders, component =>
         {
-            var component = Assert.Single(builder.Resources, r => r.Name == componentName);
-
             Assert.Contains(
                 component.Annotations.OfType<WaitAnnotation>(),
                 wait => wait.Resource == cluster);
-        }
+        });
     }
 
     private static async Task<IDistributedApplicationTestingBuilder> CreateAppHostBuilderAsync()
@@ -43,6 +38,23 @@ public sealed class AppHostTopologyTests
             ("ARGOCD_ASPIRE_ENABLE_CMP", null));
 
         return await DistributedApplicationTestingBuilder.CreateAsync<Projects.ArgoCd_Aspire_AppHost>();
+    }
+
+    private static bool ReceivesKubeconfig(IResource resource)
+    {
+        var environment = new Dictionary<string, object>();
+        var context = new EnvironmentCallbackContext(
+            new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run),
+            resource,
+            environment,
+            CancellationToken.None);
+
+        foreach (var annotation in resource.Annotations.OfType<EnvironmentCallbackAnnotation>())
+        {
+            annotation.Callback(context).GetAwaiter().GetResult();
+        }
+
+        return environment.ContainsKey("KUBECONFIG");
     }
 
     private sealed class EnvironmentVariableScope : IDisposable
