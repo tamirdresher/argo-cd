@@ -38,7 +38,7 @@ internal static class ArgoCdDex
     /// follows (see <c>RepoServerOverride</c>/dev-mounter) — because each worktree here gets its
     /// own Kind cluster and kubeconfig rather than sharing an ambient context.
     ///
-    /// <c></c> gates this on the Kind resource after its configured
+    /// <c>WaitFor</c> gates this on the Kind resource after its configured
     /// <c>WithManifest</c> state bootstrap has completed.
     /// </summary>
     public static IResourceBuilder<GoAppResource> AddArgoCdGenDexConfig(
@@ -52,10 +52,11 @@ internal static class ArgoCdDex
                 "gendexcfg",
                 "-o", dexConfigPath,
                 "--kubeconfig", cluster.Resource.KubeconfigPath,
-                "-n", "argocd")
+                "-n", ArgoCdManifestSet.ArgoCdNamespace)
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-dex")
             .WithEnvironment("KUBECONFIG", cluster.Resource.KubeconfigPath)
             .WithEnvironment("K8S_CLUSTER_NAME", cluster.Resource.Name)
+            .WaitFor(cluster)
             ;
     }
 

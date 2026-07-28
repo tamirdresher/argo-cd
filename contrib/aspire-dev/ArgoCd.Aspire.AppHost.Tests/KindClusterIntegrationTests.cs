@@ -6,7 +6,7 @@ namespace ArgoCd.Aspire.AppHostTests;
 
 /// <summary>
 /// Opt-in, live-cluster integration test validating the "Kind holds state only" invariant of the
-/// v2 Aspire dev loop: the manifests this AppHost applies to Kind (CRDs, namespace, ConfigMaps,
+/// v2 Aspire dev loop: the manifests this AppHost applies to Kind (CRDs, ConfigMaps,
 /// Secrets, RBAC) never create any Deployment or Pod, because every Argo CD component runs as a
 /// native host-process Aspire resource instead.
 ///
@@ -39,8 +39,6 @@ public sealed class KindClusterIntegrationTests
 
             await RunOrThrow("kind", $"create cluster --name {ClusterName} --kubeconfig \"{kubeconfigPath}\"");
 
-            await RunOrThrow("kubectl", $"create namespace argocd --kubeconfig \"{kubeconfigPath}\"");
-
             foreach (var relativePath in ArgoCdManifestSet.Crds)
             {
                 var fullPath = Path.Combine(repoRoot, relativePath);
@@ -54,27 +52,27 @@ public sealed class KindClusterIntegrationTests
                 var fullPath = Path.Combine(repoRoot, relativePath);
                 await RunOrThrow(
                     "kubectl",
-                    $"apply --server-side --force-conflicts -n argocd -f \"{fullPath}\" --kubeconfig \"{kubeconfigPath}\"");
+                    $"apply --server-side --force-conflicts -n default -f \"{fullPath}\" --kubeconfig \"{kubeconfigPath}\"");
             }
 
-            var (_, namespaces, _) = await RunOrThrow("kubectl", $"get namespace argocd -o name --kubeconfig \"{kubeconfigPath}\"");
-            Assert.Contains("namespace/argocd", namespaces);
+            var (_, namespaces, _) = await RunOrThrow("kubectl", $"get namespace default -o name --kubeconfig \"{kubeconfigPath}\"");
+            Assert.Contains("namespace/default", namespaces);
 
             var (_, crds, _) = await RunOrThrow("kubectl", $"get crd -o name --kubeconfig \"{kubeconfigPath}\"");
             Assert.Contains("applications.argoproj.io", crds);
             Assert.Contains("applicationsets.argoproj.io", crds);
             Assert.Contains("appprojects.argoproj.io", crds);
 
-            var (_, configMaps, _) = await RunOrThrow("kubectl", $"get configmap argocd-cm -n argocd -o name --kubeconfig \"{kubeconfigPath}\"");
+            var (_, configMaps, _) = await RunOrThrow("kubectl", $"get configmap argocd-cm -n default -o name --kubeconfig \"{kubeconfigPath}\"");
             Assert.Contains("configmap/argocd-cm", configMaps);
 
             // The state-only invariant: no Deployments and no Pods should ever exist in the
             // argocd namespace, because this dev loop never applies workload manifests -- every
             // Argo CD component is launched as a native host-process Aspire resource instead.
-            var (_, deployments, _) = await RunOrThrow("kubectl", $"get deployments -n argocd -o name --kubeconfig \"{kubeconfigPath}\"");
+            var (_, deployments, _) = await RunOrThrow("kubectl", $"get deployments -n default -o name --kubeconfig \"{kubeconfigPath}\"");
             Assert.Empty(deployments.Trim());
 
-            var (_, pods, _) = await RunOrThrow("kubectl", $"get pods -n argocd -o name --kubeconfig \"{kubeconfigPath}\"");
+            var (_, pods, _) = await RunOrThrow("kubectl", $"get pods -n default -o name --kubeconfig \"{kubeconfigPath}\"");
             Assert.Empty(pods.Trim());
         }
         finally

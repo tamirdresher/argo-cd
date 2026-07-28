@@ -2,7 +2,7 @@ namespace ArgoCd.Aspire.AppHost;
 
 /// <summary>
 /// The explicit, hand-curated list of upstream <c>manifests/</c> files that make up Argo CD's
-/// *state* (CustomResourceDefinitions, Namespace, ServiceAccounts, Roles/RoleBindings,
+/// *state* (CustomResourceDefinitions, ServiceAccounts, Roles/RoleBindings,
 /// ClusterRoles/ClusterRoleBindings, ConfigMaps and Secrets) as opposed to its *workloads*
 /// (Deployments, StatefulSets, Services, NetworkPolicies).
 ///
@@ -93,7 +93,7 @@ internal static class ArgoCdManifestSet
         Path.Combine("manifests", "base", "dex", "argocd-dex-server-rolebinding.yaml"),
     ];
 
-    private const string ArgoCdNamespace = "argocd";
+    internal const string ArgoCdNamespace = "default";
 
     private static readonly HashSet<string> NamespacedKinds = new(StringComparer.Ordinal)
     {
@@ -110,15 +110,7 @@ internal static class ArgoCdManifestSet
 
         var repoRoot = ArgoCdRepository.Root;
 
-        var documents = new List<string>
-        {
-            $"""
-            apiVersion: v1
-            kind: Namespace
-            metadata:
-              name: {ArgoCdNamespace}
-            """,
-        };
+        var documents = new List<string>();
 
         foreach (var relativePath in EnumerateStateOnlyManifests(enableDex))
         {
@@ -156,6 +148,8 @@ internal static class ArgoCdManifestSet
 
     internal static string EnsureNamespace(string yaml, string @namespace)
     {
+        yaml = yaml.Replace("namespace: argocd", $"namespace: {@namespace}", StringComparison.Ordinal);
+
         var kind = ReadTopLevelScalar(yaml, "kind");
         if (kind is null || !NamespacedKinds.Contains(kind) || yaml.Contains($"\n  namespace: {@namespace}", StringComparison.Ordinal))
         {

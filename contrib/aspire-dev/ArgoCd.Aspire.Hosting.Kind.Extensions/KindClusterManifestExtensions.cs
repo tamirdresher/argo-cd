@@ -8,10 +8,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Eventing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+
+[assembly: InternalsVisibleTo("ArgoCd.Aspire.AppHost.Tests")]
 
 namespace Aspire.Hosting;
 
@@ -28,7 +31,7 @@ public static class KindClusterManifestExtensions
     /// <param name="manifestPath">Absolute path to a Kubernetes manifest file or directory.</param>
     /// <returns>The same builder for fluent chaining.</returns>
     /// <remarks>
-    /// Requires <c>kubectl</c> on <c>PATH</c>. Runs <c>kubectl apply -f {manifestPath} --kubeconfig {cluster.KubeconfigPath}</c>.
+    /// Requires <c>kubectl</c> on <c>PATH</c>. Runs <c>kubectl apply --server-side --force-conflicts -f {manifestPath} --kubeconfig {cluster.KubeconfigPath}</c>.
     /// Multiple calls compose in registration order. Manifest apply errors are logged and re-thrown so
     /// downstream resources that <c>.WaitFor(cluster)</c> see the failure and do not start against a
     /// half-bootstrapped cluster.
@@ -59,7 +62,7 @@ public static class KindClusterManifestExtensions
                 manifestPath, resource.Name);
 
             var (exitCode, stdout, stderr) = await RunKubectlAsync(
-                ["apply", "-f", manifestPath, "--kubeconfig", resource.KubeconfigPath],
+                CreateKubectlApplyArguments(manifestPath, resource.KubeconfigPath),
                 ct);
 
             if (exitCode != 0)
@@ -67,7 +70,7 @@ public static class KindClusterManifestExtensions
                 var err = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
                 logger.LogError("kubectl apply failed (exit {ExitCode}): {Error}", exitCode, err);
                 throw new InvalidOperationException(
-                    $"'kubectl apply -f {manifestPath}' failed with exit code {exitCode}. {err}");
+                    $"'kubectl apply --server-side --force-conflicts -f {manifestPath}' failed with exit code {exitCode}. {err}");
             }
 
             var oneLine = (stdout ?? string.Empty).Trim().Replace("\r\n", " · ").Replace("\n", " · ");
@@ -76,6 +79,9 @@ public static class KindClusterManifestExtensions
 
         return builder;
     }
+
+    internal static string[] CreateKubectlApplyArguments(string manifestPath, string kubeconfigPath) =>
+        ["apply", "--server-side", "--force-conflicts", "-f", manifestPath, "--kubeconfig", kubeconfigPath];
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunKubectlAsync(
         IReadOnlyList<string> arguments,

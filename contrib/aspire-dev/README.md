@@ -56,7 +56,7 @@ Debug flow:
 ## What it does
 
 - Creates a local Kind cluster with `CommunityToolkit.Aspire.Hosting.Kind`.
-- Applies Argo CD's own state manifests: CRDs, namespace, RBAC, ConfigMaps and Secrets. It does not apply Argo CD workload Deployments, StatefulSets, Services, or NetworkPolicies.
+- Applies Argo CD's own state manifests to the Kind cluster's `default` namespace: CRDs, RBAC, ConfigMaps and Secrets. It does not apply Argo CD workload Deployments, StatefulSets, Services, or NetworkPolicies.
 - Runs every Argo CD component as a native host process matching the repository Procfile's command, environment, and ports.
 - Runs the UI with `pnpm start` so webpack HMR remains intact.
 - Watches component Go source directories and restarts only the matching Aspire resource after edits.

@@ -33,7 +33,7 @@ public class ArgoCdManifestSetTests
 
             Assert.Equal(outputPath, renderedPath);
             var rendered = File.ReadAllText(renderedPath);
-            Assert.Contains("kind: Namespace", rendered);
+            Assert.DoesNotContain("kind: Namespace", rendered);
             Assert.Contains("applications.argoproj.io", rendered);
         }
         finally
@@ -46,7 +46,7 @@ public class ArgoCdManifestSetTests
     }
 
     [Fact]
-    public void EnsureNamespace_AddsArgocdNamespaceToNamespacedKinds()
+    public void EnsureNamespace_AddsDefaultNamespaceToNamespacedKinds()
     {
         var yaml = """
             apiVersion: v1
@@ -57,10 +57,10 @@ public class ArgoCdManifestSetTests
               url: http://localhost:8080
             """;
 
-        var rendered = ArgoCdManifestSet.EnsureNamespace(yaml, "argocd");
+        var rendered = ArgoCdManifestSet.EnsureNamespace(yaml, "default");
 
         Assert.Contains("metadata:", rendered);
-        Assert.Contains("  namespace: argocd", rendered);
+        Assert.Contains("  namespace: default", rendered);
         Assert.Contains("  name: argocd-cm", rendered);
     }
 
@@ -74,8 +74,26 @@ public class ArgoCdManifestSetTests
               name: applications.argoproj.io
             """;
 
-        var rendered = ArgoCdManifestSet.EnsureNamespace(yaml, "argocd");
+        var rendered = ArgoCdManifestSet.EnsureNamespace(yaml, "default");
 
+        Assert.DoesNotContain("namespace: default", rendered);
+    }
+
+    [Fact]
+    public void EnsureNamespace_RewritesArgocdServiceAccountSubjectsToTargetNamespace()
+    {
+        var yaml = """
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: ClusterRoleBinding
+            subjects:
+            - kind: ServiceAccount
+              name: argocd-server
+              namespace: argocd
+            """;
+
+        var rendered = ArgoCdManifestSet.EnsureNamespace(yaml, "default");
+
+        Assert.Contains("  namespace: default", rendered);
         Assert.DoesNotContain("namespace: argocd", rendered);
     }
 }

@@ -213,10 +213,11 @@ internal static class KindEnvironmentExtensions
     public static IResourceBuilder<T> WithKindEnvironment<T>(
         this IResourceBuilder<T> resource,
         IResourceBuilder<KindClusterResource> cluster)
-        where T : IResourceWithEnvironment
+        where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
         return resource
             .WithEnvironment("KUBECONFIG", cluster.Resource.KubeconfigPath)
-            .WithEnvironment("K8S_CLUSTER_NAME", cluster.Resource.Name);
+            .WithEnvironment("K8S_CLUSTER_NAME", cluster.Resource.Name)
+            .WaitFor(cluster);
     }
 }

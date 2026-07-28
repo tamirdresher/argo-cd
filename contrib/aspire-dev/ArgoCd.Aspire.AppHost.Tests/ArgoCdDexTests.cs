@@ -110,7 +110,7 @@ public sealed class ArgoCdDexTests
 
         var args = await GetArgsAsync(gendexcfg);
         Assert.Equal(
-            new[] { "run", "./cmd", "gendexcfg", "-o", dexConfigPath, "--kubeconfig", cluster.Resource.KubeconfigPath, "-n", "argocd" },
+            new[] { "run", "./cmd", "gendexcfg", "-o", dexConfigPath, "--kubeconfig", cluster.Resource.KubeconfigPath, "-n", "default" },
             args);
 
         var env = await GetEnvironmentAsync(gendexcfg);
@@ -129,6 +129,20 @@ public sealed class ArgoCdDexTests
         var env = await GetEnvironmentAsync(gendexcfg);
         Assert.Equal(cluster.Resource.KubeconfigPath, env["KUBECONFIG"]);
         Assert.Equal(cluster.Resource.Name, env["K8S_CLUSTER_NAME"]);
+    }
+
+    [Fact]
+    public void GenDexConfig_WaitsForKindCluster()
+    {
+        using var builder = NewBuilderDisposable();
+        var cluster = builder.Builder.AddKindCluster("test-cluster");
+        var dexConfigPath = Path.Combine(Path.GetTempPath(), "argocd-aspire-dex-tests-dex.yaml");
+
+        var gendexcfg = builder.Builder.AddArgoCdGenDexConfig(dexConfigPath, cluster);
+
+        var wait = GetWaitFor(gendexcfg.Resource, cluster.Resource);
+        Assert.NotNull(wait);
+        Assert.Equal(WaitType.WaitUntilHealthy, wait!.WaitType);
     }
 
     [Fact]

@@ -42,6 +42,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\ArgoCd.Aspire.Hosting.Kind.Extensions\ArgoCd.Aspire.Hosting.Kind.Extensions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
     <PackageReference Include="Aspire.Hosting.Go" Version="13.4.6-preview.1.26319.6" />
     <PackageReference Include="Aspire.Hosting.Redis" Version="13.4.6" />
