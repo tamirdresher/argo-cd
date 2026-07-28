@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "ArgoCd.Aspire.AppHost/ArgoCd.Aspire.AppHost.csproj"
+  }
+}
