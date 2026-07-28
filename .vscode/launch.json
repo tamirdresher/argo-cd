@@ -5,7 +5,14 @@
       "name": "Debug Aspire AppHost",
       "type": "aspire",
       "request": "launch",
-      "program": "${workspaceFolder}/contrib/aspire-dev/ArgoCd.Aspire.AppHost/ArgoCd.Aspire.AppHost.csproj"
+      "program": "${workspaceFolder}/contrib/aspire-dev/ArgoCd.Aspire.AppHost/ArgoCd.Aspire.AppHost.csproj",
+      "dashboardBrowser": "openExternalBrowser",
+      "env": {
+        // dlv compiles with optimizations disabled, which is a separate build-cache
+        // entry from `go build`. A cold debug build of ./cmd takes several minutes on
+        // this repo, well past DCP's 120s default for starting an IDE run session.
+        "DCP_IDE_REQUEST_TIMEOUT_SECONDS": "900"
+      }
     }
   ]
 }
