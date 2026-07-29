@@ -102,7 +102,6 @@ public sealed class ArgoCdComponentsTests
         {
             "run", "./cmd",
             "--loglevel", "debug",
-            "--redis", "localhost:6379",
             "--repo-server", "localhost:8081",
             "--commit-server", "localhost:8086",
             "--application-namespaces=",
@@ -118,6 +117,7 @@ public sealed class ArgoCdComponentsTests
         Assert.True(env.ContainsKey("ARGOCD_TLS_DATA_PATH"));
         Assert.True(env.ContainsKey("ARGOCD_SSH_DATA_PATH"));
         Assert.True(env.ContainsKey("GOCOVERDIR"));
+        Assert.True(env.ContainsKey("REDIS_SERVER"));
 
         Assert.Empty(GetEndpoints(resource));
     }
@@ -137,7 +137,6 @@ public sealed class ArgoCdComponentsTests
         {
             "run", "./cmd",
             "--loglevel", "debug",
-            "--redis", "localhost:6379",
             "--disable-auth=true",
             "--insecure",
             "--dex-server", "http://localhost:5556",
@@ -150,6 +149,7 @@ public sealed class ArgoCdComponentsTests
         var env = await GetEnvironmentAsync(resource);
         Assert.Equal("true", env["ARGOCD_FAKE_IN_CLUSTER"]);
         Assert.Equal("argocd-server", env["ARGOCD_BINARY_NAME"]);
+        Assert.True(env.ContainsKey("REDIS_SERVER"));
 
         var endpoints = GetEndpoints(resource);
         var http = Assert.Single(endpoints);
@@ -175,7 +175,6 @@ public sealed class ArgoCdComponentsTests
             "run", "./cmd",
             "--loglevel", "debug",
             "--port", "8081",
-            "--redis", "localhost:6379",
         }, args);
 
         var env = await GetEnvironmentAsync(resource);
@@ -187,6 +186,7 @@ public sealed class ArgoCdComponentsTests
         Assert.True(env.ContainsKey("ARGOCD_TLS_DATA_PATH"));
         Assert.True(env.ContainsKey("ARGOCD_SSH_DATA_PATH"));
         Assert.Equal("false", env["ARGOCD_GPG_ENABLED"]);
+        Assert.True(env.ContainsKey("REDIS_SERVER"));
 
         var endpoints = GetEndpoints(resource);
         Assert.Equal(2, endpoints.Count);
@@ -386,11 +386,11 @@ public sealed class ArgoCdComponentsTests
             Assert.True(rawEnv.TryGetValue("REDIS_PASSWORD", out var value), $"{resource.Resource.Name} is missing REDIS_PASSWORD");
             Assert.Same(redis.Resource.PasswordParameter, value);
 
-            // The --redis flag itself must remain host:port only; credentials must never leak into argv.
+            // The Redis endpoint is supplied through REDIS_SERVER so Aspire can resolve the
+            // dynamically allocated TCP endpoint; credentials must never leak into argv.
             var args = await GetArgsAsync(resource);
-            var redisFlagIndex = args.IndexOf("--redis");
-            Assert.True(redisFlagIndex >= 0, $"{resource.Resource.Name} is missing the --redis flag");
-            Assert.Equal("localhost:6379", args[redisFlagIndex + 1]);
+            Assert.DoesNotContain("--redis", args);
+            Assert.True(rawEnv.ContainsKey("REDIS_SERVER"), $"{resource.Resource.Name} is missing REDIS_SERVER");
         }
     }
 

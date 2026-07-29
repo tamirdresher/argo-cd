@@ -40,10 +40,9 @@ internal static class ArgoCdComponents
         this IDistributedApplicationBuilder builder, IResourceBuilder<RedisResource> redis)
     {
         const string component = "app-controller";
-        var args = new List<string>
+        var args = new List<object>
         {
             "--loglevel", "debug",
-            "--redis", "localhost:6379",
             "--repo-server", "localhost:8081",
             "--commit-server", "localhost:8086",
         };
@@ -56,7 +55,7 @@ internal static class ArgoCdComponents
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
         return builder.AddGoApp("application-controller", ArgoCdRepository.Root, PackagePath)
-            .WithAppArgs(args.Cast<object>().ToArray())
+            .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_TLS_DATA_PATH", ArgoCdPaths.TlsDataPath)
             .WithEnvironment("ARGOCD_SSH_DATA_PATH", ArgoCdPaths.SshDataPath)
@@ -64,6 +63,7 @@ internal static class ArgoCdComponents
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
             .WithEnvironment("HOSTNAME", "testappcontroller-1")
+            .WithRedisServer(redis)
             .WithRedisPassword(builder, redis);
     }
 
@@ -74,10 +74,9 @@ internal static class ArgoCdComponents
         this IDistributedApplicationBuilder builder, IResourceBuilder<RedisResource> redis)
     {
         const string component = "api-server";
-        var args = new List<string>
+        var args = new List<object>
         {
             "--loglevel", "debug",
-            "--redis", "localhost:6379",
             "--disable-auth=true",
             "--insecure",
             "--dex-server", "http://localhost:5556",
@@ -92,7 +91,7 @@ internal static class ArgoCdComponents
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
         return builder.AddGoApp("api-server", ArgoCdRepository.Root, PackagePath)
-            .WithAppArgs(args.Cast<object>().ToArray())
+            .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_TLS_DATA_PATH", ArgoCdPaths.TlsDataPath)
             .WithEnvironment("ARGOCD_SSH_DATA_PATH", ArgoCdPaths.SshDataPath)
@@ -101,6 +100,7 @@ internal static class ArgoCdComponents
             .WithEnvironment("FORCE_LOG_COLORS", "1")
             .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "http", isProxied: false)
             .WithHttpHealthCheck("/api/version")
+            .WithRedisServer(redis)
             .WithRedisPassword(builder, redis);
     }
 
@@ -108,14 +108,15 @@ internal static class ArgoCdComponents
     /// Repo server (Procfile: <c>repo-server</c>). Source: <c>reposerver/</c>.
     /// </summary>
     public static IResourceBuilder<GoAppResource> AddArgoCdRepoServer(
-        this IDistributedApplicationBuilder builder, IResourceBuilder<RedisResource> redis)
+        this IDistributedApplicationBuilder builder,
+        IResourceBuilder<RedisResource> redis,
+        string? gitVerifyWrapperDirectory = null)
     {
         const string component = "repo-server";
-        var args = new List<string>
+        var args = new List<object>
         {
             "--loglevel", "debug",
             "--port", "8081",
-            "--redis", "localhost:6379",
         };
         AppendFlagIfEnvSet(args, "--otlp-address", "ARGOCD_OTLP_ADDRESS");
 
@@ -127,7 +128,7 @@ internal static class ArgoCdComponents
         ArgoCdPaths.EnsureDirectoryExists(ArgoCdPaths.SshDataPath);
 
         var resource = builder.AddGoApp("repo-server", ArgoCdRepository.Root, PackagePath)
-            .WithAppArgs(args.Cast<object>().ToArray())
+            .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_GNUPGHOME", ArgoCdPaths.GpgKeysPath)
             .WithEnvironment("ARGOCD_PLUGINSOCKFILEPATH", ArgoCdPaths.CmpPluginSocketPath())
@@ -141,7 +142,17 @@ internal static class ArgoCdComponents
             .WithHttpEndpoint(port: 8081, targetPort: 8081, name: "http", isProxied: false)
             .WithHttpEndpoint(port: 8084, targetPort: 8084, name: "metrics", isProxied: false)
             .WithHttpHealthCheck("/healthz", endpointName: "metrics")
+            .WithRedisServer(redis)
             .WithRedisPassword(builder, redis);
+
+        if (!string.IsNullOrWhiteSpace(gitVerifyWrapperDirectory))
+        {
+            var path = string.Concat(
+                gitVerifyWrapperDirectory,
+                Path.PathSeparator,
+                Environment.GetEnvironmentVariable("PATH"));
+            resource = resource.WithEnvironment("PATH", path);
+        }
 
         // Optional passthrough matching the Procfile's `export GIT_CONFIG_GLOBAL=$ARGOCD_GIT_CONFIG`
         // behavior — only wired when the developer has opted in via ARGOCD_GIT_CONFIG.
@@ -165,7 +176,7 @@ internal static class ArgoCdComponents
         this IDistributedApplicationBuilder builder)
     {
         const string component = "commit-server";
-        var args = new List<string>
+        var args = new List<object>
         {
             "--loglevel", "debug",
             "--port", "8086",
@@ -175,7 +186,7 @@ internal static class ArgoCdComponents
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
         return builder.AddGoApp("commit-server", ArgoCdRepository.Root, PackagePath)
-            .WithAppArgs(args.Cast<object>().ToArray())
+            .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-commit-server")
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
@@ -191,7 +202,7 @@ internal static class ArgoCdComponents
         this IDistributedApplicationBuilder builder)
     {
         const string component = "applicationset-controller";
-        var args = new List<string>
+        var args = new List<object>
         {
             "--loglevel", "debug",
             "--metrics-addr", "localhost:12345",
@@ -204,7 +215,7 @@ internal static class ArgoCdComponents
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
         return builder.AddGoApp("applicationset-controller", ArgoCdRepository.Root, PackagePath)
-            .WithAppArgs(args.Cast<object>().ToArray())
+            .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_TLS_DATA_PATH", ArgoCdPaths.TlsDataPath)
             .WithEnvironment("ARGOCD_SSH_DATA_PATH", ArgoCdPaths.SshDataPath)
@@ -228,7 +239,7 @@ internal static class ArgoCdComponents
         this IDistributedApplicationBuilder builder)
     {
         const string component = "notification";
-        var args = new List<string>
+        var args = new List<object>
         {
             "--loglevel", "debug",
         };
@@ -239,7 +250,7 @@ internal static class ArgoCdComponents
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
         return builder.AddGoApp("notifications-controller", ArgoCdRepository.Root, PackagePath)
-            .WithAppArgs(args.Cast<object>().ToArray())
+            .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_TLS_DATA_PATH", ArgoCdPaths.TlsDataPath)
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-notifications")
@@ -268,7 +279,7 @@ internal static class ArgoCdComponents
                 "fine without it — only custom config-management-plugin sources are affected).");
         }
 
-        var args = new List<string>
+        var args = new List<object>
         {
             "--config-dir-path", "./test/cmp",
             "--loglevel", "debug",
@@ -276,7 +287,7 @@ internal static class ArgoCdComponents
         AppendFlagIfEnvSet(args, "--otlp-address", "ARGOCD_OTLP_ADDRESS");
 
         return builder.AddGoApp("cmp-server", ArgoCdRepository.Root, PackagePath)
-            .WithAppArgs(args.Cast<object>().ToArray())
+            .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-cmp-server")
             .WithEnvironment("ARGOCD_PLUGINSOCKFILEPATH", ArgoCdPaths.CmpPluginSocketPath())
@@ -288,7 +299,13 @@ internal static class ArgoCdComponents
     /// otherwise <paramref name="defaultValue"/>. Mirrors Procfile <c>${VAR:-default}</c> bash
     /// expansions, which always pass the flag.
     /// </summary>
-    private static void AppendFlagWithDefault(List<string> args, string flagName, string envVarName, string defaultValue)
+    private static ReferenceExpression RedisEndpoint(IResourceBuilder<RedisResource> redis)
+    {
+        var endpoint = redis.Resource.GetEndpoint("tcp").Property(EndpointProperty.HostAndPort);
+        return ReferenceExpression.Create($"{endpoint}");
+    }
+
+    private static void AppendFlagWithDefault(List<object> args, string flagName, string envVarName, string defaultValue)
     {
         var value = Environment.GetEnvironmentVariable(envVarName);
         args.Add($"{flagName}={(string.IsNullOrEmpty(value) ? defaultValue : value)}");
@@ -299,7 +316,7 @@ internal static class ArgoCdComponents
     /// Used for flags such as <c>--otlp-address</c> that the Procfile always technically passes
     /// (possibly empty) but where omission has an identical effect.
     /// </summary>
-    private static void AppendFlagIfEnvSet(List<string> args, string flagName, string envVarName)
+    private static void AppendFlagIfEnvSet(List<object> args, string flagName, string envVarName)
     {
         var value = Environment.GetEnvironmentVariable(envVarName);
         if (!string.IsNullOrEmpty(value))
@@ -328,5 +345,12 @@ internal static class ArgoCdComponents
         }
 
         return resource;
+    }
+
+    private static IResourceBuilder<GoAppResource> WithRedisServer(
+        this IResourceBuilder<GoAppResource> resource,
+        IResourceBuilder<RedisResource> redis)
+    {
+        return resource.WithEnvironment("REDIS_SERVER", RedisEndpoint(redis));
     }
 }

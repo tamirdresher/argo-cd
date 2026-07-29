@@ -82,16 +82,15 @@ cluster
     .WithAdminCredentialCommand();
 
 // ---------------------------------------------------------------------------------------------
-// Redis — Aspire-managed, pinned to the Procfile's hard-coded localhost:6379 (the Go components
-// below do not read a Redis connection string from configuration; they hard-code
-// `--redis localhost:6379`, matching the Procfile exactly — a plain host:port with no embedded
-// credentials).
+// Redis — Aspire-managed. The Go components receive Aspire's dynamically allocated plain TCP
+// endpoint through REDIS_SERVER instead of a hard-coded --redis flag, because Aspire exposes the
+// non-TLS Redis endpoint on a free host port even when a preferred host port is requested.
 //
 // SECURITY BOUNDARY: builder.AddRedis(...) generates and enforces a random password by default.
 // The real Argo CD components authenticate to Redis via the REDIS_PASSWORD environment variable
-// (see util/cache/cache.go), never via the --redis flag, so leaving Aspire's default password in
-// place while every component's --redis flag stays a bare host:port would make every component
-// fail Redis auth (NOAUTH). Two ways to reconcile this were considered:
+// (see util/cache/cache.go), not via the Redis endpoint value, so leaving Aspire's default
+// password in place while failing to thread REDIS_PASSWORD would make every component fail Redis
+// auth (NOAUTH). Two ways to reconcile this were considered:
 //   1. Thread the generated password into every component via REDIS_PASSWORD (matches upstream
 //      auth exactly, keeps Redis network-authenticated).
 //   2. Disable the password outright with `.WithPassword(null)`, matching the Procfile's own
@@ -105,16 +104,19 @@ cluster
 // ArgoCdComponents.WithRedisPassword — so this remains safe even if that assumption changes.
 // ---------------------------------------------------------------------------------------------
 var redis = builder
-    .AddRedis("redis")
-    .WithHostPort(6379)
+    .AddRedis("redis", port: 6379)
     .WithPassword(null);
+
+var gitVerifyWrapperDirectory = IsTruthy(ArgoCdPrerequisites.SkipEnvironmentVariable)
+    ? null
+    : GitVerifyWrapperShim.EnsureAvailableIfNeeded(repoRoot);
 
 // ---------------------------------------------------------------------------------------------
 // Argo CD components — native host processes, one per Procfile entry, matching commands/env/ports
 // exactly (see ArgoCdComponents.cs). `.WaitFor` below only orders process *launch*; like the
 // Procfile itself, nothing here blocks on the target TCP ports actually accepting connections.
 // ---------------------------------------------------------------------------------------------
-var repoServer = builder.AddArgoCdRepoServer(redis).WithKindEnvironment(cluster).WaitFor(redis);
+var repoServer = builder.AddArgoCdRepoServer(redis, gitVerifyWrapperDirectory).WithKindEnvironment(cluster).WaitFor(redis);
 var commitServer = builder.AddArgoCdCommitServer();
 var apiServer = builder.AddArgoCdApiServer(redis).WithKindEnvironment(cluster).WaitFor(redis).WaitFor(repoServer);
 var applicationController = builder
