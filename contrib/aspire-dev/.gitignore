@@ -1,3 +1,6 @@
 
 # Visual Studio local state
 .vs/
+
+# End-to-end test scratch files and screenshots
+.e2e/

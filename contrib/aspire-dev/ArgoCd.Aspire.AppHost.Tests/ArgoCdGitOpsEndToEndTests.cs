@@ -1,9 +1,12 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
+using Microsoft.Playwright;
 using Xunit;
 
 namespace ArgoCd.Aspire.AppHost.Tests;
@@ -32,6 +35,13 @@ public sealed class ArgoCdGitOpsEndToEndTests
     private static readonly TimeSpan AppHostStartupTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan SyncTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan WorkloadTimeout = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan UiTimeout = TimeSpan.FromSeconds(90);
+    private static readonly int[] FixedHostPorts = [8080, 8084, 8087, 12345, 12346, 7001, 4000];
+    private static readonly ResourceIdentity[] ExpectedGuestbookResources =
+    [
+        new("apps", "Deployment", WorkloadNamespace, "guestbook-ui"),
+        new("", "Service", WorkloadNamespace, "guestbook-ui"),
+    ];
 
     private readonly ITestOutputHelper output;
 
@@ -43,17 +53,58 @@ public sealed class ArgoCdGitOpsEndToEndTests
     [Fact]
     public async Task AppHost_SyncsCanonicalGuestbookApplication_AndReportsItHealthy()
     {
+        await RunGuestbookScenarioAsync(async (_, cluster, httpClient, _, cancellationToken) =>
+        {
+            var statusResources = await ReadApplicationManagedResourcesAsync(httpClient, cancellationToken);
+            AssertExpectedArgoCdResources(
+                statusResources,
+                "Application status.resources[]",
+                requireExactSet: true);
+
+            var resourceTreeResources = await ReadApplicationResourceTreeAsync(httpClient, cancellationToken);
+            AssertExpectedArgoCdResources(
+                resourceTreeResources,
+                "Application resource-tree",
+                requireExactSet: false);
+            AssertArgoCdViewsAgree(statusResources, resourceTreeResources);
+            output.WriteLine(
+                "ASSERT Argo CD API: status.resources[] and resource-tree both include " +
+                "Deployment/guestbook-ui and Service/guestbook-ui as Synced, with Healthy health where reported.");
+
+            await AssertGuestbookClusterResourcesAsync(cluster.KubeconfigPath, cancellationToken);
+            output.WriteLine(
+                "ASSERT Kind cluster: deployment/guestbook-ui has 1 desired replica, 1 ready replica, " +
+                "selector app=guestbook-ui, and service/guestbook-ui selects app=guestbook-ui on port 80 -> 80.");
+        });
+    }
+
+    [Fact]
+    public async Task AppHost_ArgoCdUiShowsCanonicalGuestbookApplicationHealthyAndSynced()
+    {
+        await EnsurePlaywrightChromiumAvailableAsync();
+
+        await RunGuestbookScenarioAsync(async (app, _, _, _, cancellationToken) =>
+        {
+            await AssertArgoCdUiAsync(app, cancellationToken);
+        });
+    }
+
+    private async Task RunGuestbookScenarioAsync(
+        Func<DistributedApplication, KindClusterResource, HttpClient, ApplicationStatus, CancellationToken, Task> assertAsync)
+    {
         var isE2e = Environment.GetEnvironmentVariable(E2EEnvironmentVariable) == "1";
         if (!isE2e)
         {
             Assert.Skip(
                 $"Set {E2EEnvironmentVariable}=1 to run this real end-to-end test. " +
-                "Prerequisites: Docker, kind, kubectl, Go, Node/pnpm, and outbound network " +
-                "access to https://github.com/argoproj/argocd-example-apps.");
+                "Prerequisites: Docker, kind, kubectl, Go, Node/pnpm, Playwright Chromium browsers " +
+                "(`pwsh bin\\Debug\\net10.0\\playwright.ps1 install chromium` after build), " +
+                "outbound network access to https://github.com/argoproj/argocd-example-apps, and free " +
+                "host ports 8080, 8084, 8087, 12345, 12346, 7001, and 4000.");
         }
 
         using var testTimeout = new CancellationTokenSource(
-            AppHostStartupTimeout + SyncTimeout + WorkloadTimeout + TimeSpan.FromMinutes(2));
+            AppHostStartupTimeout + SyncTimeout + WorkloadTimeout + UiTimeout + TimeSpan.FromMinutes(2));
         var cancellationToken = testTimeout.Token;
 
         var repoRoot = global::ArgoCd.Aspire.AppHost.ArgoCdRepository.Root;
@@ -61,6 +112,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
         Directory.CreateDirectory(scratchDirectory);
         var applicationManifestPath = Path.Combine(scratchDirectory, $"{ApplicationName}.yaml");
 
+        AssertFixedHostPortsAvailable();
         await DeleteKindClusterIfPresentAsync(cancellationToken);
 
         await using var builder = await CreateAppHostBuilderAsync();
@@ -104,9 +156,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
                 $"ASSERT Argo CD API: status.sync.status={applicationStatus.SyncStatus}, " +
                 $"status.health.status={applicationStatus.HealthStatus}.");
 
-            await WaitForGuestbookDeploymentAsync(cluster.KubeconfigPath, cancellationToken);
-            output.WriteLine(
-                $"ASSERT Kind cluster: deployment/guestbook-ui exists in namespace {WorkloadNamespace}.");
+            await assertAsync(app, cluster, httpClient, applicationStatus, cancellationToken);
         }
         finally
         {
@@ -238,6 +288,171 @@ public sealed class ArgoCdGitOpsEndToEndTests
         return new ApplicationStatus(syncStatus ?? string.Empty, healthStatus ?? string.Empty, conditions);
     }
 
+    private static async Task<IReadOnlyList<ArgoCdResource>> ReadApplicationManagedResourcesAsync(
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
+    {
+        var requestUri = $"/api/v1/applications/{ApplicationName}?appNamespace={ApplicationNamespace}&refresh=normal";
+        using var response = await httpClient.GetAsync(requestUri, cancellationToken);
+        var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            $"Expected Argo CD Application GET to return 200 OK, but got {(int)response.StatusCode} {response.StatusCode}. Response: {responseText}");
+
+        using var document = JsonDocument.Parse(responseText);
+        if (!document.RootElement.TryGetProperty("status", out var status) ||
+            !status.TryGetProperty("resources", out _) ||
+            status.GetProperty("resources").ValueKind != JsonValueKind.Array)
+        {
+            Assert.Fail($"Expected Argo CD Application response to contain status.resources[]. Response: {responseText}");
+        }
+
+        var resources = status.GetProperty("resources");
+        return ReadResources(resources);
+    }
+
+    private static async Task<IReadOnlyList<ArgoCdResource>> ReadApplicationResourceTreeAsync(
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
+    {
+        var requestUri = $"/api/v1/applications/{ApplicationName}/resource-tree?appNamespace={ApplicationNamespace}";
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(WorkloadTimeout);
+
+        string? lastError = null;
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(15), timeoutSource.Token);
+            while (!timeoutSource.IsCancellationRequested)
+            {
+                try
+                {
+                    using var response = await httpClient.GetAsync(requestUri, timeoutSource.Token);
+                    var responseText = await response.Content.ReadAsStringAsync(timeoutSource.Token);
+                    if (response.StatusCode == HttpStatusCode.OK)
+                    {
+                        using var document = JsonDocument.Parse(responseText);
+                        if (document.RootElement.TryGetProperty("nodes", out var nodes) &&
+                            nodes.ValueKind == JsonValueKind.Array)
+                        {
+                            return ReadResources(nodes);
+                        }
+
+                        lastError = $"resource-tree response did not contain nodes[]. Response: {responseText}";
+                    }
+                    else
+                    {
+                        lastError =
+                            $"resource-tree GET returned {(int)response.StatusCode} {response.StatusCode}. Response: {responseText}";
+                    }
+                }
+                catch (HttpRequestException ex)
+                {
+                    lastError = $"resource-tree GET failed: {ex.Message}";
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(5), timeoutSource.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Re-throw below with the last resource-tree error, not a bare cancellation.
+        }
+
+        throw new TimeoutException(
+            $"Timed out after {WorkloadTimeout} waiting for Argo CD resource-tree to be readable. Last error: {lastError ?? "<none>"}.");
+    }
+
+    private static IReadOnlyList<ArgoCdResource> ReadResources(JsonElement resources)
+    {
+        return resources.EnumerateArray()
+            .Select(resource =>
+            {
+                var group = ReadString(resource, "group") ?? string.Empty;
+                var kind = ReadString(resource, "kind") ?? string.Empty;
+                var name = ReadString(resource, "name") ?? string.Empty;
+                var @namespace = ReadString(resource, "namespace") ?? string.Empty;
+                var status = ReadString(resource, "status");
+                var health = TryGetNestedString(resource, "health", "status") ?? ReadString(resource, "health");
+                return new ArgoCdResource(new ResourceIdentity(group, kind, @namespace, name), status, health);
+            })
+            .ToArray();
+    }
+
+    private static string? ReadString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+    }
+
+    private static void AssertExpectedArgoCdResources(
+        IReadOnlyList<ArgoCdResource> resources,
+        string source,
+        bool requireExactSet)
+    {
+        var byIdentity = resources.ToLookup(resource => resource.Identity);
+        var actualExpectedKeys = ExpectedGuestbookResources
+            .Where(expected => byIdentity.Contains(expected))
+            .ToArray();
+        var missing = ExpectedGuestbookResources.Except(actualExpectedKeys).ToArray();
+        Assert.True(
+            missing.Length == 0,
+            $"{source} resource set is missing expected guestbook object(s): {string.Join(", ", missing.Select(FormatResource))}. " +
+            $"Actual {source} set: {FormatResourceSet(resources.Select(resource => resource.Identity))}.");
+
+        if (requireExactSet)
+        {
+            var extra = resources
+                .Select(resource => resource.Identity)
+                .Except(ExpectedGuestbookResources)
+                .ToArray();
+            Assert.True(
+                extra.Length == 0,
+                $"{source} resource set had unexpected managed object(s): {string.Join(", ", extra.Select(FormatResource))}. " +
+                $"Expected exactly: {FormatResourceSet(ExpectedGuestbookResources)}.");
+        }
+
+        foreach (var expected in ExpectedGuestbookResources)
+        {
+            var matches = byIdentity[expected].ToArray();
+            Assert.True(
+                matches.Length > 0,
+                $"{source} did not contain expected {FormatResource(expected)}.");
+
+            foreach (var resource in matches)
+            {
+                Assert.True(
+                    string.Equals(resource.Status, "Synced", StringComparison.Ordinal),
+                    $"Expected {source} {FormatResource(expected)} to report status Synced, but it reported '{resource.Status ?? "<missing>"}'.");
+
+                if (!string.IsNullOrWhiteSpace(resource.Health))
+                {
+                    Assert.True(
+                        string.Equals(resource.Health, "Healthy", StringComparison.Ordinal),
+                        $"Expected {source} {FormatResource(expected)} health to be Healthy when reported, but it reported '{resource.Health}'.");
+                }
+            }
+        }
+    }
+
+    private static void AssertArgoCdViewsAgree(
+        IReadOnlyList<ArgoCdResource> statusResources,
+        IReadOnlyList<ArgoCdResource> resourceTreeResources)
+    {
+        var statusDeclared = statusResources.Select(resource => resource.Identity).OrderBy(FormatResource).ToArray();
+        var treeDeclared = resourceTreeResources
+            .Select(resource => resource.Identity)
+            .Where(ExpectedGuestbookResources.Contains)
+            .OrderBy(FormatResource)
+            .ToArray();
+
+        Assert.True(
+            statusDeclared.SequenceEqual(treeDeclared),
+            "Argo CD Application status.resources[] and resource-tree disagreed on the declared guestbook resource set. " +
+            $"status.resources[]: {FormatResourceSet(statusDeclared)}; resource-tree declared subset: {FormatResourceSet(treeDeclared)}.");
+    }
+
     private static string? TryGetNestedString(JsonElement element, string firstProperty, string secondProperty)
     {
         return element.TryGetProperty(firstProperty, out var first) &&
@@ -269,11 +484,11 @@ public sealed class ArgoCdGitOpsEndToEndTests
             }));
     }
 
-    private static async Task WaitForGuestbookDeploymentAsync(
+    private static async Task AssertGuestbookClusterResourcesAsync(
         string kubeconfigPath,
         CancellationToken cancellationToken)
     {
-        var result = await RunOrThrowAsync(
+        var waitResult = await RunOrThrowAsync(
             "kubectl",
             [
                 "wait",
@@ -287,8 +502,208 @@ public sealed class ArgoCdGitOpsEndToEndTests
             "waiting for the guestbook Deployment to become available",
             cancellationToken);
 
-        Assert.Contains("deployment.apps/guestbook-ui condition met", result.Stdout);
+        Assert.Contains("deployment.apps/guestbook-ui condition met", waitResult.Stdout);
+
+        var deployment = await GetKubernetesObjectAsync(
+            kubeconfigPath,
+            "deployment",
+            "guestbook-ui",
+            cancellationToken);
+        var desiredReplicas = ReadInt32(deployment.RootElement, "spec", "replicas");
+        var readyReplicas = ReadInt32(deployment.RootElement, "status", "readyReplicas") ?? 0;
+        var availableReplicas = ReadInt32(deployment.RootElement, "status", "availableReplicas") ?? 0;
+        var selector = ReadString(deployment.RootElement, "spec", "selector", "matchLabels", "app");
+        Assert.True(
+            desiredReplicas == 1,
+            $"Expected cluster Deployment {WorkloadNamespace}/guestbook-ui spec.replicas to be 1, but it was {desiredReplicas?.ToString() ?? "<missing>"}.");
+        Assert.True(
+            readyReplicas == 1,
+            $"Expected cluster Deployment {WorkloadNamespace}/guestbook-ui status.readyReplicas to be 1, but it was {readyReplicas}.");
+        Assert.True(
+            availableReplicas >= 1,
+            $"Expected cluster Deployment {WorkloadNamespace}/guestbook-ui status.availableReplicas to be at least 1, but it was {availableReplicas}.");
+        Assert.True(
+            selector == "guestbook-ui",
+            $"Expected cluster Deployment {WorkloadNamespace}/guestbook-ui selector app=guestbook-ui, but it was '{selector ?? "<missing>"}'.");
+
+        var service = await GetKubernetesObjectAsync(
+            kubeconfigPath,
+            "service",
+            "guestbook-ui",
+            cancellationToken);
+        var serviceSelector = ReadString(service.RootElement, "spec", "selector", "app");
+        Assert.True(
+            serviceSelector == "guestbook-ui",
+            $"Expected cluster Service {WorkloadNamespace}/guestbook-ui selector app=guestbook-ui, but it was '{serviceSelector ?? "<missing>"}'.");
+
+        var hasExpectedPort = service.RootElement
+            .GetProperty("spec")
+            .GetProperty("ports")
+            .EnumerateArray()
+            .Any(port =>
+                ReadInt32(port, "port") == 80 &&
+                ReadInt32(port, "targetPort") == 80);
+        Assert.True(
+            hasExpectedPort,
+            $"Expected cluster Service {WorkloadNamespace}/guestbook-ui to expose port 80 targeting 80, but its ports were " +
+            $"{service.RootElement.GetProperty("spec").GetProperty("ports").GetRawText()}.");
     }
+
+    private static async Task<JsonDocument> GetKubernetesObjectAsync(
+        string kubeconfigPath,
+        string kind,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunOrThrowAsync(
+            "kubectl",
+            [
+                "get",
+                kind,
+                name,
+                "-n", WorkloadNamespace,
+                "-o", "json",
+                "--kubeconfig", kubeconfigPath,
+            ],
+            TimeSpan.FromMinutes(1),
+            $"reading Kubernetes {kind}/{name}",
+            cancellationToken);
+
+        return JsonDocument.Parse(result.Stdout);
+    }
+
+    private async Task AssertArgoCdUiAsync(DistributedApplication app, CancellationToken cancellationToken)
+    {
+        using var uiClient = app.CreateHttpClient("ui", "http");
+        var uiBaseAddress = uiClient.BaseAddress ?? throw new InvalidOperationException("Aspire did not provide a base address for the ui/http endpoint.");
+        output.WriteLine($"ASSERT Aspire model resolved Argo CD UI endpoint to {uiBaseAddress}.");
+
+        var scratchDirectory = Path.Combine(
+            global::ArgoCd.Aspire.AppHost.ArgoCdRepository.Root,
+            "contrib",
+            "aspire-dev",
+            ".e2e");
+        Directory.CreateDirectory(scratchDirectory);
+        var screenshotPath = Path.Combine(scratchDirectory, $"{ApplicationName}-argocd-ui.png");
+
+        using var playwright = await Microsoft.Playwright.Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
+        var page = await browser.NewPageAsync();
+        page.SetDefaultTimeout((float)UiTimeout.TotalMilliseconds);
+
+        try
+        {
+            await page.GotoAsync(
+                new Uri(uiBaseAddress, "applications").ToString(),
+                new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = (float)UiTimeout.TotalMilliseconds });
+
+            Assert.True(
+                !page.Url.Contains("/login", StringComparison.OrdinalIgnoreCase),
+                $"Expected the Argo CD UI to skip login because api-server runs with --disable-auth=true, but browser URL was {page.Url}.");
+
+            var appLink = page.GetByRole(AriaRole.Link, new() { NameRegex = new Regex(ApplicationName, RegexOptions.IgnoreCase) }).First;
+            await Microsoft.Playwright.Assertions.Expect(appLink).ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
+            await appLink.ClickAsync();
+
+            await Microsoft.Playwright.Assertions.Expect(page.GetByText(ApplicationName).First)
+                .ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
+            await Microsoft.Playwright.Assertions.Expect(page.GetByText("Synced").First)
+                .ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
+            await Microsoft.Playwright.Assertions.Expect(page.GetByText("Healthy").First)
+                .ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
+            await Microsoft.Playwright.Assertions.Expect(page.GetByText("guestbook-ui").First)
+                .ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
+
+            output.WriteLine(
+                $"ASSERT Argo CD UI: applications list linked to {ApplicationName}; detail view showed " +
+                $"{ApplicationName}, Synced, Healthy, and guestbook-ui.");
+        }
+        finally
+        {
+            await page.ScreenshotAsync(new PageScreenshotOptions
+            {
+                Path = screenshotPath,
+                FullPage = true,
+            });
+            output.WriteLine($"ASSERT Argo CD UI screenshot saved to {screenshotPath}.");
+        }
+    }
+
+    private static async Task EnsurePlaywrightChromiumAvailableAsync()
+    {
+        try
+        {
+            using var playwright = await Microsoft.Playwright.Playwright.CreateAsync();
+            await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
+        }
+        catch (PlaywrightException ex) when (
+            ex.Message.Contains("Executable doesn't exist", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("playwright install", StringComparison.OrdinalIgnoreCase))
+        {
+            Assert.Skip(
+                "Playwright Chromium browser is not installed. Build the test project, then run " +
+                "`pwsh bin\\Debug\\net10.0\\playwright.ps1 install chromium` from contrib\\aspire-dev\\ArgoCd.Aspire.AppHost.Tests.");
+        }
+    }
+
+    private static void AssertFixedHostPortsAvailable()
+    {
+        var listeners = IPGlobalProperties
+            .GetIPGlobalProperties()
+            .GetActiveTcpListeners()
+            .Where(endpoint => FixedHostPorts.Contains(endpoint.Port))
+            .Select(endpoint => endpoint.Port)
+            .Distinct()
+            .Order()
+            .ToArray();
+
+        Assert.True(
+            listeners.Length == 0,
+            $"Cannot start the Aspire AppHost because fixed host port(s) {string.Join(", ", listeners)} are already listening. " +
+            "Stop the other AppHost/process and wait for ports 8080, 8084, 8087, 12345, 12346, 7001, and 4000 to be released before running this E2E test.");
+    }
+
+    private static int? ReadInt32(JsonElement element, params string[] path)
+    {
+        var current = element;
+        foreach (var segment in path)
+        {
+            if (!current.TryGetProperty(segment, out current))
+            {
+                return null;
+            }
+        }
+
+        return current.ValueKind switch
+        {
+            JsonValueKind.Number when current.TryGetInt32(out var value) => value,
+            JsonValueKind.String when int.TryParse(current.GetString(), out var value) => value,
+            _ => null,
+        };
+    }
+
+    private static string? ReadString(JsonElement element, params string[] path)
+    {
+        var current = element;
+        foreach (var segment in path)
+        {
+            if (!current.TryGetProperty(segment, out current))
+            {
+                return null;
+            }
+        }
+
+        return current.ValueKind == JsonValueKind.String ? current.GetString() : null;
+    }
+
+    private static string FormatResource(ResourceIdentity resource)
+    {
+        var group = string.IsNullOrEmpty(resource.Group) ? "core" : resource.Group;
+        return $"{group}/{resource.Kind} {resource.Namespace}/{resource.Name}";
+    }
+
+    private static string FormatResourceSet(IEnumerable<ResourceIdentity> resources) =>
+        string.Join(", ", resources.OrderBy(FormatResource).Select(FormatResource));
 
     private static async Task CleanupGuestbookAsync(
         string kubeconfigPath,
@@ -451,5 +866,12 @@ public sealed class ArgoCdGitOpsEndToEndTests
 
     private sealed record ApplicationStatus(string SyncStatus, string HealthStatus, string Conditions);
 
+    private sealed record ResourceIdentity(string Group, string Kind, string Namespace, string Name);
+
+    private sealed record ArgoCdResource(ResourceIdentity Identity, string? Status, string? Health);
+
     private sealed record CommandResult(int ExitCode, string Stdout, string Stderr);
 }
+
+[CollectionDefinition("AppHostE2E", DisableParallelization = true)]
+public sealed class AppHostE2ECollection;

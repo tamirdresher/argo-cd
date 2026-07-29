@@ -65,6 +65,18 @@ public sealed class ArgoCdComponentsTests
     private static bool HasHealthCheck(IResourceBuilder<GoAppResource> resourceBuilder) =>
         resourceBuilder.Resource.Annotations.OfType<HealthCheckAnnotation>().Any();
 
+    private static string HostAndPort<T>(IResourceBuilder<T> resourceBuilder, string endpointName)
+        where T : IResourceWithEndpoints =>
+        ReferenceExpression.Create($"{resourceBuilder.Resource.GetEndpoint(endpointName).Property(EndpointProperty.HostAndPort)}").ToString()!;
+
+    private static string Url<T>(IResourceBuilder<T> resourceBuilder, string endpointName)
+        where T : IResourceWithEndpoints =>
+        ReferenceExpression.Create($"{resourceBuilder.Resource.GetEndpoint(endpointName).Property(EndpointProperty.Url)}").ToString()!;
+
+    private static string TargetPort<T>(IResourceBuilder<T> resourceBuilder, string endpointName)
+        where T : IResourceWithEndpoints =>
+        ReferenceExpression.Create($"{resourceBuilder.Resource.GetEndpoint(endpointName).Property(EndpointProperty.TargetPort)}").ToString()!;
+
     /// <summary>
     /// Like <see cref="GetEnvironmentAsync"/>, but returns the raw (unstringified) values placed
     /// into the environment dictionary by callback annotations. This is required to verify
@@ -91,7 +103,9 @@ public sealed class ArgoCdComponentsTests
     {
         using var builder = NewBuilderDisposable();
         var redis = builder.Builder.AddRedis("redis").WithPassword(null);
-        var resource = builder.Builder.AddArgoCdApplicationController(redis);
+        var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
+        var commitServer = builder.Builder.AddArgoCdCommitServer();
+        var resource = builder.Builder.AddArgoCdApplicationController(redis, repoServer, commitServer);
 
         Assert.Equal("application-controller", resource.Resource.Name);
         Assert.Equal("go", resource.Resource.Command);
@@ -102,8 +116,8 @@ public sealed class ArgoCdComponentsTests
         {
             "run", "./cmd",
             "--loglevel", "debug",
-            "--repo-server", "localhost:8081",
-            "--commit-server", "localhost:8086",
+            "--repo-server", HostAndPort(repoServer, "http"),
+            "--commit-server", HostAndPort(commitServer, "http"),
             "--application-namespaces=",
             "--server-side-diff-enabled=false",
             "--hydrator-enabled=false",
@@ -127,7 +141,8 @@ public sealed class ArgoCdComponentsTests
     {
         using var builder = NewBuilderDisposable();
         var redis = builder.Builder.AddRedis("redis").WithPassword(null);
-        var resource = builder.Builder.AddArgoCdApiServer(redis);
+        var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
+        var resource = builder.Builder.AddArgoCdApiServer(redis, repoServer);
 
         Assert.Equal("api-server", resource.Resource.Name);
         Assert.Equal("go", resource.Resource.Command);
@@ -140,7 +155,7 @@ public sealed class ArgoCdComponentsTests
             "--disable-auth=true",
             "--insecure",
             "--dex-server", "http://localhost:5556",
-            "--repo-server", "localhost:8081",
+            "--repo-server", HostAndPort(repoServer, "http"),
             "--port", "8080",
             "--application-namespaces=",
             "--hydrator-enabled=false",
@@ -161,6 +176,22 @@ public sealed class ArgoCdComponentsTests
     }
 
     [Fact]
+    public async Task ApiServer_UsesDexEndpointReference_WhenDexResourceIsProvided()
+    {
+        using var builder = NewBuilderDisposable();
+        var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+        var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
+        var gendexcfg = builder.Builder.AddGoApp("gendexcfg", ArgoCdRepository.Root, "./cmd");
+        var dex = builder.Builder.AddArgoCdDex(ArgoCdPaths.DexConfigPath(), gendexcfg);
+        var resource = builder.Builder.AddArgoCdApiServer(redis, repoServer, dex);
+
+        var args = await GetArgsAsync(resource);
+        var index = args.IndexOf("--dex-server");
+        Assert.True(index >= 0, "api-server should pass --dex-server");
+        Assert.Equal(Url(dex, "http"), args[index + 1]);
+    }
+
+    [Fact]
     public async Task RepoServer_MatchesProcfileCommandFlagsPortAndGpgPaths()
     {
         using var builder = NewBuilderDisposable();
@@ -174,7 +205,7 @@ public sealed class ArgoCdComponentsTests
         {
             "run", "./cmd",
             "--loglevel", "debug",
-            "--port", "8081",
+            "--port", TargetPort(resource, "http"),
         }, args);
 
         var env = await GetEnvironmentAsync(resource);
@@ -190,9 +221,11 @@ public sealed class ArgoCdComponentsTests
 
         var endpoints = GetEndpoints(resource);
         Assert.Equal(2, endpoints.Count);
-        Assert.Contains(endpoints, e => e.Name == "http" && e.Port == 8081 && e.TargetPort == 8081);
-        Assert.Contains(endpoints, e => e.Name == "metrics" && e.Port == 8084 && e.TargetPort == 8084);
-        Assert.All(endpoints, e => Assert.False(e.IsProxied));
+        var httpEndpoint = Assert.Single(endpoints, e => e.Name == "http");
+        Assert.True(httpEndpoint.IsProxied);
+        Assert.NotEqual(8081, httpEndpoint.Port);
+        Assert.NotEqual(8081, httpEndpoint.TargetPort);
+        Assert.Contains(endpoints, e => e.Name == "metrics" && e.Port == 8084 && e.TargetPort == 8084 && !e.IsProxied);
         Assert.True(HasHealthCheck(resource));
     }
 
@@ -205,7 +238,7 @@ public sealed class ArgoCdComponentsTests
         Assert.Equal("commit-server", resource.Resource.Name);
 
         var args = await GetArgsAsync(resource);
-        Assert.Equal(new[] { "run", "./cmd", "--loglevel", "debug", "--port", "8086" }, args);
+        Assert.Equal(new[] { "run", "./cmd", "--loglevel", "debug", "--port", TargetPort(resource, "http") }, args);
 
         var env = await GetEnvironmentAsync(resource);
         Assert.Equal("argocd-commit-server", env["ARGOCD_BINARY_NAME"]);
@@ -216,9 +249,11 @@ public sealed class ArgoCdComponentsTests
 
         var endpoints = GetEndpoints(resource);
         Assert.Equal(2, endpoints.Count);
-        Assert.Contains(endpoints, e => e.Name == "http" && e.Port == 8086 && e.TargetPort == 8086);
-        Assert.Contains(endpoints, e => e.Name == "metrics" && e.Port == 8087 && e.TargetPort == 8087);
-        Assert.All(endpoints, e => Assert.False(e.IsProxied));
+        var httpEndpoint = Assert.Single(endpoints, e => e.Name == "http");
+        Assert.True(httpEndpoint.IsProxied);
+        Assert.NotEqual(8086, httpEndpoint.Port);
+        Assert.NotEqual(8086, httpEndpoint.TargetPort);
+        Assert.Contains(endpoints, e => e.Name == "metrics" && e.Port == 8087 && e.TargetPort == 8087 && !e.IsProxied);
         Assert.True(HasHealthCheck(resource));
     }
 
@@ -226,7 +261,9 @@ public sealed class ArgoCdComponentsTests
     public async Task ApplicationSetController_HasThreeEndpointsAndProgressiveSyncsDefault()
     {
         using var builder = NewBuilderDisposable();
-        var resource = builder.Builder.AddArgoCdApplicationSetController();
+        var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+        var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
+        var resource = builder.Builder.AddArgoCdApplicationSetController(repoServer);
 
         Assert.Equal("applicationset-controller", resource.Resource.Name);
 
@@ -238,7 +275,7 @@ public sealed class ArgoCdComponentsTests
             "--metrics-addr", "localhost:12345",
             "--probe-addr", "localhost:12346",
             "--webhook-addr", "localhost:7001",
-            "--argocd-repo-server", "localhost:8081",
+            "--argocd-repo-server", HostAndPort(repoServer, "http"),
         }, args);
 
         var env = await GetEnvironmentAsync(resource);
@@ -313,14 +350,16 @@ public sealed class ArgoCdComponentsTests
     {
         using var builder = NewBuilderDisposable();
         var redis = builder.Builder.AddRedis("redis").WithPassword(null);
+        var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
+        var commitServer = builder.Builder.AddArgoCdCommitServer();
 
         IResourceBuilder<GoAppResource>[] resources =
         [
-            builder.Builder.AddArgoCdApplicationController(redis),
-            builder.Builder.AddArgoCdApiServer(redis),
-            builder.Builder.AddArgoCdRepoServer(redis),
-            builder.Builder.AddArgoCdCommitServer(),
-            builder.Builder.AddArgoCdApplicationSetController(),
+            builder.Builder.AddArgoCdApplicationController(redis, repoServer, commitServer),
+            builder.Builder.AddArgoCdApiServer(redis, repoServer),
+            repoServer,
+            commitServer,
+            builder.Builder.AddArgoCdApplicationSetController(repoServer),
             builder.Builder.AddArgoCdNotificationsController(),
         ];
 
@@ -338,7 +377,8 @@ public sealed class ArgoCdComponentsTests
             using (var builder = NewBuilderDisposable())
             {
                 var redis = builder.Builder.AddRedis("redis").WithPassword(null);
-                var resource = builder.Builder.AddArgoCdApiServer(redis);
+                var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
+                var resource = builder.Builder.AddArgoCdApiServer(redis, repoServer);
                 var args = await GetArgsAsync(resource);
                 Assert.DoesNotContain("--otlp-address", args);
             }
@@ -347,7 +387,8 @@ public sealed class ArgoCdComponentsTests
             using (var builder = NewBuilderDisposable())
             {
                 var redis = builder.Builder.AddRedis("redis").WithPassword(null);
-                var resource = builder.Builder.AddArgoCdApiServer(redis);
+                var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
+                var resource = builder.Builder.AddArgoCdApiServer(redis, repoServer);
                 var args = await GetArgsAsync(resource);
                 Assert.Contains("--otlp-address", args);
                 var index = args.IndexOf("--otlp-address");
@@ -376,9 +417,10 @@ public sealed class ArgoCdComponentsTests
         var redis = builder.Builder.AddRedis("redis");
         Assert.NotNull(redis.Resource.PasswordParameter);
 
-        var apiServer = builder.Builder.AddArgoCdApiServer(redis);
         var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
-        var applicationController = builder.Builder.AddArgoCdApplicationController(redis);
+        var commitServer = builder.Builder.AddArgoCdCommitServer();
+        var apiServer = builder.Builder.AddArgoCdApiServer(redis, repoServer);
+        var applicationController = builder.Builder.AddArgoCdApplicationController(redis, repoServer, commitServer);
 
         foreach (var resource in new[] { apiServer, repoServer, applicationController })
         {
@@ -408,9 +450,10 @@ public sealed class ArgoCdComponentsTests
         var redis = builder.Builder.AddRedis("redis").WithPassword(null);
         Assert.Null(redis.Resource.PasswordParameter);
 
-        var apiServer = builder.Builder.AddArgoCdApiServer(redis);
         var repoServer = builder.Builder.AddArgoCdRepoServer(redis);
-        var applicationController = builder.Builder.AddArgoCdApplicationController(redis);
+        var commitServer = builder.Builder.AddArgoCdCommitServer();
+        var apiServer = builder.Builder.AddArgoCdApiServer(redis, repoServer);
+        var applicationController = builder.Builder.AddArgoCdApplicationController(redis, repoServer, commitServer);
 
         foreach (var resource in new[] { apiServer, repoServer, applicationController })
         {

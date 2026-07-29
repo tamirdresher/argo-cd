@@ -81,6 +81,6 @@ internal static class ArgoCdDex
             .WithArgs("serve", "/dex.yaml")
             .WithBindMount(dexConfigPath, "/dex.yaml", isReadOnly: true)
             .WaitForCompletion(gendexcfg)
-            .WithHttpEndpoint(port: 5556, targetPort: 5556, name: "http", isProxied: false);
+            .WithHttpEndpoint(targetPort: 5556, name: "http");
     }
 }

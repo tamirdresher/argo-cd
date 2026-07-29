@@ -10,10 +10,12 @@ namespace ArgoCd.Aspire.AppHost;
 /// Go application resources.
 ///
 /// Each method mirrors the corresponding <c>Procfile</c> entry as closely as possible: the same
-/// <c>go run ./cmd</c> invocation, the same environment variables, and the same literal
-/// ports — except that the Procfile's hardcoded <c>/tmp/argocd-local</c>-style defaults are
-/// replaced with the cross-platform temp paths from <see cref="ArgoCdPaths"/> so the loop works
-/// on Windows/macOS/Linux alike.
+/// <c>go run ./cmd</c> invocation, the same environment variables, and the same process-owned
+/// ports. Inter-component addresses are resolved from the Aspire resources that own those
+/// endpoints instead of being handwritten, so the process still receives the same shape of
+/// <c>host:port</c> argument while avoiding stale localhost literals. The Procfile's hardcoded
+/// <c>/tmp/argocd-local</c>-style defaults are replaced with the cross-platform temp paths from
+/// <see cref="ArgoCdPaths"/> so the loop works on Windows/macOS/Linux alike.
 ///
 /// These are official Aspire <see cref="GoAppResource"/> host processes: no Docker image build,
 /// no cross-compilation, no <c>make</c>, and no POSIX shell wrapper are involved. Aspire launches
@@ -37,14 +39,17 @@ internal static class ArgoCdComponents
     /// Application controller (Procfile: <c>controller</c>). Source: <c>controller/</c>.
     /// </summary>
     public static IResourceBuilder<GoAppResource> AddArgoCdApplicationController(
-        this IDistributedApplicationBuilder builder, IResourceBuilder<RedisResource> redis)
+        this IDistributedApplicationBuilder builder,
+        IResourceBuilder<RedisResource> redis,
+        IResourceBuilder<GoAppResource> repoServer,
+        IResourceBuilder<GoAppResource> commitServer)
     {
         const string component = "app-controller";
         var args = new List<object>
         {
             "--loglevel", "debug",
-            "--repo-server", "localhost:8081",
-            "--commit-server", "localhost:8086",
+            "--repo-server", HostAndPort(repoServer, "http"),
+            "--commit-server", HostAndPort(commitServer, "http"),
         };
         AppendFlagIfEnvSet(args, "--otlp-address", "ARGOCD_OTLP_ADDRESS");
         AppendFlagWithDefault(args, "--application-namespaces", "ARGOCD_APPLICATION_NAMESPACES", "");
@@ -71,7 +76,10 @@ internal static class ArgoCdComponents
     /// API server (Procfile: <c>api-server</c>). Source: <c>server/</c>.
     /// </summary>
     public static IResourceBuilder<GoAppResource> AddArgoCdApiServer(
-        this IDistributedApplicationBuilder builder, IResourceBuilder<RedisResource> redis)
+        this IDistributedApplicationBuilder builder,
+        IResourceBuilder<RedisResource> redis,
+        IResourceBuilder<GoAppResource> repoServer,
+        IResourceBuilder<ContainerResource>? dex = null)
     {
         const string component = "api-server";
         var args = new List<object>
@@ -79,8 +87,8 @@ internal static class ArgoCdComponents
             "--loglevel", "debug",
             "--disable-auth=true",
             "--insecure",
-            "--dex-server", "http://localhost:5556",
-            "--repo-server", "localhost:8081",
+            "--dex-server", dex is null ? "http://localhost:5556" : Url(dex, "http"),
+            "--repo-server", HostAndPort(repoServer, "http"),
             "--port", "8080",
         };
         AppendFlagIfEnvSet(args, "--otlp-address", "ARGOCD_OTLP_ADDRESS");
@@ -113,10 +121,15 @@ internal static class ArgoCdComponents
         string? gitVerifyWrapperDirectory = null)
     {
         const string component = "repo-server";
+        var resource = builder.AddGoApp("repo-server", ArgoCdRepository.Root, PackagePath)
+            .WithHttpEndpoint(name: "http", isProxied: true)
+            .WithHttpEndpoint(port: 8084, targetPort: 8084, name: "metrics", isProxied: false)
+            .WithHttpHealthCheck("/healthz", endpointName: "metrics");
+
         var args = new List<object>
         {
             "--loglevel", "debug",
-            "--port", "8081",
+            "--port", TargetPort(resource, "http"),
         };
         AppendFlagIfEnvSet(args, "--otlp-address", "ARGOCD_OTLP_ADDRESS");
 
@@ -127,7 +140,7 @@ internal static class ArgoCdComponents
         ArgoCdPaths.EnsureDirectoryExists(ArgoCdPaths.TlsDataPath);
         ArgoCdPaths.EnsureDirectoryExists(ArgoCdPaths.SshDataPath);
 
-        var resource = builder.AddGoApp("repo-server", ArgoCdRepository.Root, PackagePath)
+        resource = resource
             .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_FAKE_IN_CLUSTER", "true")
             .WithEnvironment("ARGOCD_GNUPGHOME", ArgoCdPaths.GpgKeysPath)
@@ -139,9 +152,6 @@ internal static class ArgoCdComponents
             .WithEnvironment("ARGOCD_GPG_ENABLED", Environment.GetEnvironmentVariable("ARGOCD_GPG_ENABLED") is { Length: > 0 } gpgEnabled ? gpgEnabled : "false")
             .WithEnvironment("GOCOVERDIR", coverageDir)
             .WithEnvironment("FORCE_LOG_COLORS", "1")
-            .WithHttpEndpoint(port: 8081, targetPort: 8081, name: "http", isProxied: false)
-            .WithHttpEndpoint(port: 8084, targetPort: 8084, name: "metrics", isProxied: false)
-            .WithHttpHealthCheck("/healthz", endpointName: "metrics")
             .WithRedisServer(redis)
             .WithRedisPassword(builder, redis);
 
@@ -176,30 +186,33 @@ internal static class ArgoCdComponents
         this IDistributedApplicationBuilder builder)
     {
         const string component = "commit-server";
+        var resource = builder.AddGoApp("commit-server", ArgoCdRepository.Root, PackagePath)
+            .WithHttpEndpoint(name: "http", isProxied: true)
+            .WithHttpEndpoint(port: 8087, targetPort: 8087, name: "metrics", isProxied: false)
+            .WithHttpHealthCheck("/healthz", endpointName: "metrics");
+
         var args = new List<object>
         {
             "--loglevel", "debug",
-            "--port", "8086",
+            "--port", TargetPort(resource, "http"),
         };
 
         var coverageDir = ArgoCdPaths.CoverageDir(component);
         ArgoCdPaths.EnsureDirectoryExists(coverageDir);
 
-        return builder.AddGoApp("commit-server", ArgoCdRepository.Root, PackagePath)
+        return resource
             .WithAppArgs(args.ToArray())
             .WithEnvironment("ARGOCD_BINARY_NAME", "argocd-commit-server")
             .WithEnvironment("GOCOVERDIR", coverageDir)
-            .WithEnvironment("FORCE_LOG_COLORS", "1")
-            .WithHttpEndpoint(port: 8086, targetPort: 8086, name: "http", isProxied: false)
-            .WithHttpEndpoint(port: 8087, targetPort: 8087, name: "metrics", isProxied: false)
-            .WithHttpHealthCheck("/healthz", endpointName: "metrics");
+            .WithEnvironment("FORCE_LOG_COLORS", "1");
     }
 
     /// <summary>
     /// ApplicationSet controller (Procfile: <c>applicationset-controller</c>). Source: <c>applicationset/</c>.
     /// </summary>
     public static IResourceBuilder<GoAppResource> AddArgoCdApplicationSetController(
-        this IDistributedApplicationBuilder builder)
+        this IDistributedApplicationBuilder builder,
+        IResourceBuilder<GoAppResource> repoServer)
     {
         const string component = "applicationset-controller";
         var args = new List<object>
@@ -208,7 +221,7 @@ internal static class ArgoCdComponents
             "--metrics-addr", "localhost:12345",
             "--probe-addr", "localhost:12346",
             "--webhook-addr", "localhost:7001",
-            "--argocd-repo-server", "localhost:8081",
+            "--argocd-repo-server", HostAndPort(repoServer, "http"),
         };
 
         var coverageDir = ArgoCdPaths.CoverageDir(component);
@@ -301,7 +314,27 @@ internal static class ArgoCdComponents
     /// </summary>
     private static ReferenceExpression RedisEndpoint(IResourceBuilder<RedisResource> redis)
     {
-        var endpoint = redis.Resource.GetEndpoint("tcp").Property(EndpointProperty.HostAndPort);
+        return HostAndPort(redis, "tcp");
+    }
+
+    private static ReferenceExpression HostAndPort<T>(IResourceBuilder<T> resource, string endpointName)
+        where T : IResourceWithEndpoints
+    {
+        var endpoint = resource.Resource.GetEndpoint(endpointName).Property(EndpointProperty.HostAndPort);
+        return ReferenceExpression.Create($"{endpoint}");
+    }
+
+    private static ReferenceExpression Url<T>(IResourceBuilder<T> resource, string endpointName)
+        where T : IResourceWithEndpoints
+    {
+        var endpoint = resource.Resource.GetEndpoint(endpointName).Property(EndpointProperty.Url);
+        return ReferenceExpression.Create($"{endpoint}");
+    }
+
+    private static ReferenceExpression TargetPort<T>(IResourceBuilder<T> resource, string endpointName)
+        where T : IResourceWithEndpoints
+    {
+        var endpoint = resource.Resource.GetEndpoint(endpointName).Property(EndpointProperty.TargetPort);
         return ReferenceExpression.Create($"{endpoint}");
     }
 

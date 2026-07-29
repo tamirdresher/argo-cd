@@ -24,6 +24,7 @@
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Eventing;
 using Aspire.Hosting.Go;
 using Aspire.Hosting.Lifecycle;
@@ -112,29 +113,15 @@ var gitVerifyWrapperDirectory = IsTruthy(ArgoCdPrerequisites.SkipEnvironmentVari
     : GitVerifyWrapperShim.EnsureAvailableIfNeeded(repoRoot);
 
 // ---------------------------------------------------------------------------------------------
-// Argo CD components — native host processes, one per Procfile entry, matching commands/env/ports
-// exactly (see ArgoCdComponents.cs). `.WaitFor` below only orders process *launch*; like the
-// Procfile itself, nothing here blocks on the target TCP ports actually accepting connections.
+// Argo CD components — native host processes, one per Procfile entry, matching commands/env and
+// process-owned ports (see ArgoCdComponents.cs). `.WaitFor` below only orders process *launch*;
+// like the Procfile itself, nothing here blocks on the target TCP ports actually accepting
+// connections. Inter-component addresses are resolved from the owning Aspire resources rather
+// than duplicated as localhost literals.
 // ---------------------------------------------------------------------------------------------
 var repoServer = builder.AddArgoCdRepoServer(redis, gitVerifyWrapperDirectory).WithKindEnvironment(cluster).WaitFor(redis);
 var commitServer = builder.AddArgoCdCommitServer();
-var apiServer = builder.AddArgoCdApiServer(redis).WithKindEnvironment(cluster).WaitFor(redis).WaitFor(repoServer);
-var applicationController = builder
-    .AddArgoCdApplicationController(redis)
-    .WithKindEnvironment(cluster)
-    .WaitFor(redis)
-    .WaitFor(repoServer)
-    .WaitFor(commitServer);
-var applicationSetController = builder.AddArgoCdApplicationSetController().WithKindEnvironment(cluster).WaitFor(repoServer);
-var notificationsController = builder.AddArgoCdNotificationsController().WithKindEnvironment(cluster);
-
-if (enableCmp)
-{
-    // Safe to call unconditionally even on Windows: AddArgoCdCmpServer itself throws
-    // PlatformNotSupportedException with actionable remediation text there. Gated behind
-    // ARGOCD_ASPIRE_ENABLE_CMP so the default loop never attempts it.
-    builder.AddArgoCdCmpServer().WithKindEnvironment(cluster);
-}
+IResourceBuilder<ContainerResource>? dex = null;
 
 if (enableDex)
 {
@@ -154,7 +141,30 @@ if (enableDex)
     // bind-mount, and WaitFor/WaitForCompletion ordering — extracted there so this resource graph
     // is unit-testable independently of this top-level-statements Program entry point.
     var gendexcfg = builder.AddArgoCdGenDexConfig(dexConfigPath, cluster);
-    builder.AddArgoCdDex(dexConfigPath, gendexcfg);
+    dex = builder.AddArgoCdDex(dexConfigPath, gendexcfg);
+}
+
+var apiServer = builder.AddArgoCdApiServer(redis, repoServer, dex).WithKindEnvironment(cluster).WaitFor(redis).WaitFor(repoServer);
+if (dex is not null)
+{
+    apiServer = apiServer.WaitFor(dex);
+}
+
+var applicationController = builder
+    .AddArgoCdApplicationController(redis, repoServer, commitServer)
+    .WithKindEnvironment(cluster)
+    .WaitFor(redis)
+    .WaitFor(repoServer)
+    .WaitFor(commitServer);
+var applicationSetController = builder.AddArgoCdApplicationSetController(repoServer).WithKindEnvironment(cluster).WaitFor(repoServer);
+var notificationsController = builder.AddArgoCdNotificationsController().WithKindEnvironment(cluster);
+
+if (enableCmp)
+{
+    // Safe to call unconditionally even on Windows: AddArgoCdCmpServer itself throws
+    // PlatformNotSupportedException with actionable remediation text there. Gated behind
+    // ARGOCD_ASPIRE_ENABLE_CMP so the default loop never attempts it.
+    builder.AddArgoCdCmpServer().WithKindEnvironment(cluster);
 }
 
 // ---------------------------------------------------------------------------------------------

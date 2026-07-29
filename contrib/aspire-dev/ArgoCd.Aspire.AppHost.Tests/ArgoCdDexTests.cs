@@ -197,7 +197,7 @@ public sealed class ArgoCdDexTests
     }
 
     [Fact]
-    public void Dex_ExposesHttpEndpointOnPort5556()
+    public void Dex_ExposesHttpEndpointWithContainerTargetPort5556()
     {
         using var builder = NewBuilderDisposable();
         var cluster = builder.Builder.AddKindCluster("test-cluster");
@@ -208,9 +208,9 @@ public sealed class ArgoCdDexTests
 
         var endpoint = Assert.Single(GetEndpoints(dex));
         Assert.Equal("http", endpoint.Name);
-        Assert.Equal(5556, endpoint.Port);
+        Assert.Null(endpoint.Port);
         Assert.Equal(5556, endpoint.TargetPort);
-        Assert.False(endpoint.IsProxied);
+        Assert.True(endpoint.IsProxied);
     }
 
     [Fact]
