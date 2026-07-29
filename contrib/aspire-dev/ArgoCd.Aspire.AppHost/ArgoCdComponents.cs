@@ -122,14 +122,14 @@ internal static class ArgoCdComponents
     {
         const string component = "repo-server";
         var resource = builder.AddGoApp("repo-server", ArgoCdRepository.Root, PackagePath)
-            .WithHttpEndpoint(name: "http", isProxied: true)
+            .WithHttpEndpoint(port: 8081, targetPort: 8081, name: "http", isProxied: false)
             .WithHttpEndpoint(port: 8084, targetPort: 8084, name: "metrics", isProxied: false)
             .WithHttpHealthCheck("/healthz", endpointName: "metrics");
 
         var args = new List<object>
         {
             "--loglevel", "debug",
-            "--port", TargetPort(resource, "http"),
+            "--port", "8081",
         };
         AppendFlagIfEnvSet(args, "--otlp-address", "ARGOCD_OTLP_ADDRESS");
 
@@ -187,14 +187,14 @@ internal static class ArgoCdComponents
     {
         const string component = "commit-server";
         var resource = builder.AddGoApp("commit-server", ArgoCdRepository.Root, PackagePath)
-            .WithHttpEndpoint(name: "http", isProxied: true)
+            .WithHttpEndpoint(port: 8086, targetPort: 8086, name: "http", isProxied: false)
             .WithHttpEndpoint(port: 8087, targetPort: 8087, name: "metrics", isProxied: false)
             .WithHttpHealthCheck("/healthz", endpointName: "metrics");
 
         var args = new List<object>
         {
             "--loglevel", "debug",
-            "--port", TargetPort(resource, "http"),
+            "--port", "8086",
         };
 
         var coverageDir = ArgoCdPaths.CoverageDir(component);
@@ -328,13 +328,6 @@ internal static class ArgoCdComponents
         where T : IResourceWithEndpoints
     {
         var endpoint = resource.Resource.GetEndpoint(endpointName).Property(EndpointProperty.Url);
-        return ReferenceExpression.Create($"{endpoint}");
-    }
-
-    private static ReferenceExpression TargetPort<T>(IResourceBuilder<T> resource, string endpointName)
-        where T : IResourceWithEndpoints
-    {
-        var endpoint = resource.Resource.GetEndpoint(endpointName).Property(EndpointProperty.TargetPort);
         return ReferenceExpression.Create($"{endpoint}");
     }
 

@@ -73,10 +73,6 @@ public sealed class ArgoCdComponentsTests
         where T : IResourceWithEndpoints =>
         ReferenceExpression.Create($"{resourceBuilder.Resource.GetEndpoint(endpointName).Property(EndpointProperty.Url)}").ToString()!;
 
-    private static string TargetPort<T>(IResourceBuilder<T> resourceBuilder, string endpointName)
-        where T : IResourceWithEndpoints =>
-        ReferenceExpression.Create($"{resourceBuilder.Resource.GetEndpoint(endpointName).Property(EndpointProperty.TargetPort)}").ToString()!;
-
     /// <summary>
     /// Like <see cref="GetEnvironmentAsync"/>, but returns the raw (unstringified) values placed
     /// into the environment dictionary by callback annotations. This is required to verify
@@ -205,7 +201,7 @@ public sealed class ArgoCdComponentsTests
         {
             "run", "./cmd",
             "--loglevel", "debug",
-            "--port", TargetPort(resource, "http"),
+            "--port", "8081",
         }, args);
 
         var env = await GetEnvironmentAsync(resource);
@@ -222,9 +218,9 @@ public sealed class ArgoCdComponentsTests
         var endpoints = GetEndpoints(resource);
         Assert.Equal(2, endpoints.Count);
         var httpEndpoint = Assert.Single(endpoints, e => e.Name == "http");
-        Assert.True(httpEndpoint.IsProxied);
-        Assert.NotEqual(8081, httpEndpoint.Port);
-        Assert.NotEqual(8081, httpEndpoint.TargetPort);
+        Assert.False(httpEndpoint.IsProxied);
+        Assert.Equal(8081, httpEndpoint.Port);
+        Assert.Equal(8081, httpEndpoint.TargetPort);
         Assert.Contains(endpoints, e => e.Name == "metrics" && e.Port == 8084 && e.TargetPort == 8084 && !e.IsProxied);
         Assert.True(HasHealthCheck(resource));
     }
@@ -238,7 +234,7 @@ public sealed class ArgoCdComponentsTests
         Assert.Equal("commit-server", resource.Resource.Name);
 
         var args = await GetArgsAsync(resource);
-        Assert.Equal(new[] { "run", "./cmd", "--loglevel", "debug", "--port", TargetPort(resource, "http") }, args);
+        Assert.Equal(new[] { "run", "./cmd", "--loglevel", "debug", "--port", "8086" }, args);
 
         var env = await GetEnvironmentAsync(resource);
         Assert.Equal("argocd-commit-server", env["ARGOCD_BINARY_NAME"]);
@@ -250,9 +246,9 @@ public sealed class ArgoCdComponentsTests
         var endpoints = GetEndpoints(resource);
         Assert.Equal(2, endpoints.Count);
         var httpEndpoint = Assert.Single(endpoints, e => e.Name == "http");
-        Assert.True(httpEndpoint.IsProxied);
-        Assert.NotEqual(8086, httpEndpoint.Port);
-        Assert.NotEqual(8086, httpEndpoint.TargetPort);
+        Assert.False(httpEndpoint.IsProxied);
+        Assert.Equal(8086, httpEndpoint.Port);
+        Assert.Equal(8086, httpEndpoint.TargetPort);
         Assert.Contains(endpoints, e => e.Name == "metrics" && e.Port == 8087 && e.TargetPort == 8087 && !e.IsProxied);
         Assert.True(HasHealthCheck(resource));
     }
