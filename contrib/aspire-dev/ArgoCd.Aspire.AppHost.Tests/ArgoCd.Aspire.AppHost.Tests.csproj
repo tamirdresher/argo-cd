@@ -30,7 +30,6 @@
          AppHost ProjectReference below is present so Aspire's testing builder can locate the
          entry point. -->
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdManifestRenderer.cs" Link="AppHost\ArgoCdManifestRenderer.cs" />
-    <Compile Include="..\ArgoCd.Aspire.AppHost\RepoServerOverride.cs" Link="AppHost\RepoServerOverride.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\DeleteClusterCommand.cs" Link="AppHost\DeleteClusterCommand.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdPaths.cs" Link="AppHost\ArgoCdPaths.cs" />
     <Compile Include="..\ArgoCd.Aspire.AppHost\ArgoCdPrerequisites.cs" Link="AppHost\ArgoCdPrerequisites.cs" />

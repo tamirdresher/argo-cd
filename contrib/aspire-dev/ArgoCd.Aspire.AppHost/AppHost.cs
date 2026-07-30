@@ -78,7 +78,6 @@ var cluster = builder
     .WithManifest(stateManifestPath);
 
 cluster
-    .WithRepoServerOverrideCommand()
     .WithDeleteClusterCommand()
     .WithAdminCredentialCommand();
 

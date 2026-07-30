@@ -34,9 +34,8 @@ internal static class ArgoCdDex
     /// <c>ARGOCD_BINARY_NAME=argocd-dex</c> (see <c>cmd/main.go</c>) to dispatch into
     /// <c>cmd/argocd-dex/commands/argocd_dex.go</c>'s <c>gendexcfg</c> subcommand. Unlike the
     /// Procfile (which relies on ambient kubectl context), <c>--kubeconfig</c> and <c>-n</c> are
-    /// passed explicitly — the same convention every other kubectl-invoking resource in this repo
-    /// follows (see <c>RepoServerOverride</c>/dev-mounter) — because each worktree here gets its
-    /// own Kind cluster and kubeconfig rather than sharing an ambient context.
+    /// passed explicitly — the same convention dev-mounter follows — because each worktree here
+    /// gets its own Kind cluster and kubeconfig rather than sharing an ambient context.
     ///
     /// <c>WaitFor</c> gates this on the Kind resource after its configured
     /// <c>WithManifest</c> state bootstrap has completed.
