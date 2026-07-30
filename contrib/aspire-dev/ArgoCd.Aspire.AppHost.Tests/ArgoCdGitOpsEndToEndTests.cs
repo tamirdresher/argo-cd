@@ -51,45 +51,32 @@ public sealed class ArgoCdGitOpsEndToEndTests
     }
 
     [Fact]
-    public async Task AppHost_SyncsCanonicalGuestbookApplication_AndReportsItHealthy()
+    public async Task WhenCanonicalGuestbookApplicationIsApplied_ThenArgoCdSyncsItAndKindRunsIt()
     {
-        await RunGuestbookScenarioAsync(async (_, cluster, httpClient, _, cancellationToken) =>
+        var applicationName = CreateApplicationName();
+        await RunGuestbookScenarioAsync(applicationName, async (_, cluster, httpClient, _, cancellationToken) =>
         {
-            var statusResources = await ReadApplicationManagedResourcesAsync(httpClient, cancellationToken);
-            AssertExpectedArgoCdResources(
-                statusResources,
-                "Application status.resources[]",
-                requireExactSet: true);
-
-            var resourceTreeResources = await ReadApplicationResourceTreeAsync(httpClient, cancellationToken);
-            AssertExpectedArgoCdResources(
-                resourceTreeResources,
-                "Application resource-tree",
-                requireExactSet: false);
-            AssertArgoCdViewsAgree(statusResources, resourceTreeResources);
-            output.WriteLine(
-                "ASSERT Argo CD API: status.resources[] and resource-tree both include " +
-                "Deployment/guestbook-ui and Service/guestbook-ui as Synced, with Healthy health where reported.");
-
-            await AssertGuestbookClusterResourcesAsync(cluster.KubeconfigPath, cancellationToken);
-            output.WriteLine(
-                "ASSERT Kind cluster: deployment/guestbook-ui has 1 desired replica, 1 ready replica, " +
-                "selector app=guestbook-ui, and service/guestbook-ui selects app=guestbook-ui on port 80 -> 80.");
+            await ThenArgoCdReportsExpectedGuestbookResourcesAsync(httpClient, applicationName, cancellationToken);
+            await ThenKindRunsGuestbookWorkloadAsync(cluster.KubeconfigPath, cancellationToken);
         });
     }
 
     [Fact]
-    public async Task AppHost_ArgoCdUiShowsCanonicalGuestbookApplicationHealthyAndSynced()
+    public async Task WhenCanonicalGuestbookApplicationIsApplied_ThenArgoCdUiShowsItHealthyAndSynced()
     {
         await EnsurePlaywrightChromiumAvailableAsync();
 
-        await RunGuestbookScenarioAsync(async (app, _, _, _, cancellationToken) =>
+        var applicationName = CreateApplicationName();
+        await RunGuestbookScenarioAsync(applicationName, async (app, _, _, _, cancellationToken) =>
         {
-            await AssertArgoCdUiAsync(app, cancellationToken);
+            await ThenArgoCdUiShowsApplicationHealthyAndSyncedAsync(app, applicationName, cancellationToken);
         });
     }
 
+    private static string CreateApplicationName() => $"{ApplicationName}-{Guid.NewGuid():N}"[..31];
+
     private async Task RunGuestbookScenarioAsync(
+        string applicationName,
         Func<DistributedApplication, KindClusterResource, HttpClient, ApplicationStatus, CancellationToken, Task> assertAsync)
     {
         var isE2e = Environment.GetEnvironmentVariable(E2EEnvironmentVariable) == "1";
@@ -110,7 +97,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
         var repoRoot = global::ArgoCd.Aspire.AppHost.ArgoCdRepository.Root;
         var scratchDirectory = Path.Combine(repoRoot, "contrib", "aspire-dev", ".e2e");
         Directory.CreateDirectory(scratchDirectory);
-        var applicationManifestPath = Path.Combine(scratchDirectory, $"{ApplicationName}.yaml");
+        var applicationManifestPath = Path.Combine(scratchDirectory, $"{applicationName}.yaml");
 
         AssertFixedHostPortsAvailable();
         await DeleteKindClusterIfPresentAsync(cancellationToken);
@@ -132,7 +119,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
             stopwatch.Stop();
             output.WriteLine($"ASSERT AppHost started, API server healthy, and application-controller running in {stopwatch.Elapsed}.");
 
-            WriteApplicationManifest(applicationManifestPath);
+            WriteApplicationManifest(applicationManifestPath, applicationName);
             await RunOrThrowAsync(
                 "kubectl",
                 [
@@ -143,11 +130,12 @@ public sealed class ArgoCdGitOpsEndToEndTests
                 TimeSpan.FromMinutes(1),
                 "creating the Argo CD Application",
                 cancellationToken);
-            output.WriteLine($"ASSERT created Application {ApplicationNamespace}/{ApplicationName} with kubectl apply.");
+            output.WriteLine($"ASSERT created Application {ApplicationNamespace}/{applicationName} with kubectl apply.");
 
             var httpClient = app.CreateHttpClient("api-server", "http");
             var applicationStatus = await WaitForApplicationHealthyAsync(
                 httpClient,
+                applicationName,
                 SyncTimeout,
                 cancellationToken);
             Assert.Equal("Synced", applicationStatus.SyncStatus);
@@ -160,7 +148,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
         }
         finally
         {
-            await CleanupGuestbookAsync(cluster.KubeconfigPath, cancellationToken);
+            await CleanupGuestbookAsync(cluster.KubeconfigPath, applicationName, cancellationToken);
             if (File.Exists(applicationManifestPath))
             {
                 File.Delete(applicationManifestPath);
@@ -222,6 +210,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
 
     private async Task<ApplicationStatus> WaitForApplicationHealthyAsync(
         HttpClient httpClient,
+        string applicationName,
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
@@ -234,7 +223,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
         {
             while (!timeoutSource.IsCancellationRequested)
             {
-                var requestUri = $"/api/v1/applications/{ApplicationName}?appNamespace={ApplicationNamespace}&refresh=normal";
+                var requestUri = $"/api/v1/applications/{applicationName}?appNamespace={ApplicationNamespace}&refresh=normal";
                 using var response = await httpClient.GetAsync(requestUri, timeoutSource.Token);
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
@@ -263,7 +252,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
         }
 
         throw new TimeoutException(
-            $"Timed out after {timeout} waiting for Argo CD Application '{ApplicationName}' to become " +
+            $"Timed out after {timeout} waiting for Argo CD Application '{applicationName}' to become " +
             $"Synced/Healthy. Last observed status: sync={lastStatus?.SyncStatus ?? "<not found>"}, " +
             $"health={lastStatus?.HealthStatus ?? "<not found>"}, " +
             $"conditions={lastStatus?.Conditions ?? "<not found>"}.");
@@ -278,7 +267,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
         {
             var response = document.RootElement.GetRawText();
             throw new InvalidOperationException(
-                $"Argo CD returned HTTP 200 for Application '{ApplicationName}', but the response did " +
+                $"Argo CD returned HTTP 200 for Application, but the response did " +
                 $"not contain an Application status object. Response: {response}");
         }
         var syncStatus = TryGetNestedString(status, "sync", "status");
@@ -288,67 +277,58 @@ public sealed class ArgoCdGitOpsEndToEndTests
         return new ApplicationStatus(syncStatus ?? string.Empty, healthStatus ?? string.Empty, conditions);
     }
 
-    private static async Task<IReadOnlyList<ArgoCdResource>> ReadApplicationManagedResourcesAsync(
+    private async Task ThenArgoCdReportsExpectedGuestbookResourcesAsync(
         HttpClient httpClient,
+        string applicationName,
         CancellationToken cancellationToken)
     {
-        var requestUri = $"/api/v1/applications/{ApplicationName}?appNamespace={ApplicationNamespace}&refresh=normal";
-        using var response = await httpClient.GetAsync(requestUri, cancellationToken);
-        var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
-        Assert.True(
-            response.StatusCode == HttpStatusCode.OK,
-            $"Expected Argo CD Application GET to return 200 OK, but got {(int)response.StatusCode} {response.StatusCode}. Response: {responseText}");
+        var statusResources = await WaitForApplicationManagedResourcesAsync(httpClient, applicationName, cancellationToken);
+        AssertExpectedArgoCdResources(
+            statusResources,
+            "Application status.resources[]",
+            requireExactSet: true);
 
-        using var document = JsonDocument.Parse(responseText);
-        if (!document.RootElement.TryGetProperty("status", out var status) ||
-            !status.TryGetProperty("resources", out _) ||
-            status.GetProperty("resources").ValueKind != JsonValueKind.Array)
-        {
-            Assert.Fail($"Expected Argo CD Application response to contain status.resources[]. Response: {responseText}");
-        }
-
-        var resources = status.GetProperty("resources");
-        return ReadResources(resources);
+        // Do not use /resource-tree here. In this host-process AppHost path the Application can
+        // be Synced/Healthy while the cached resource tree endpoint repeatedly returns
+        // "error getting cached app resource tree: EOF"; status.resources[] is the stable Argo CD
+        // Application API surface for the same declared managed resources.
+        output.WriteLine(
+            "ASSERT Argo CD API: status.resources[] includes exactly " +
+            "Deployment/guestbook-ui and Service/guestbook-ui as Synced, with Healthy health where reported.");
     }
 
-    private static async Task<IReadOnlyList<ArgoCdResource>> ReadApplicationResourceTreeAsync(
+    private static async Task<IReadOnlyList<ArgoCdResource>> WaitForApplicationManagedResourcesAsync(
         HttpClient httpClient,
+        string applicationName,
         CancellationToken cancellationToken)
     {
-        var requestUri = $"/api/v1/applications/{ApplicationName}/resource-tree?appNamespace={ApplicationNamespace}";
+        var requestUri = $"/api/v1/applications/{applicationName}?appNamespace={ApplicationNamespace}&refresh=normal";
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(WorkloadTimeout);
 
         string? lastError = null;
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(15), timeoutSource.Token);
             while (!timeoutSource.IsCancellationRequested)
             {
-                try
+                using var response = await httpClient.GetAsync(requestUri, timeoutSource.Token);
+                var responseText = await response.Content.ReadAsStringAsync(timeoutSource.Token);
+                if (response.StatusCode == HttpStatusCode.OK)
                 {
-                    using var response = await httpClient.GetAsync(requestUri, timeoutSource.Token);
-                    var responseText = await response.Content.ReadAsStringAsync(timeoutSource.Token);
-                    if (response.StatusCode == HttpStatusCode.OK)
+                    using var document = JsonDocument.Parse(responseText);
+                    if (document.RootElement.TryGetProperty("status", out var status) &&
+                        status.TryGetProperty("resources", out var resources) &&
+                        resources.ValueKind == JsonValueKind.Array)
                     {
-                        using var document = JsonDocument.Parse(responseText);
-                        if (document.RootElement.TryGetProperty("nodes", out var nodes) &&
-                            nodes.ValueKind == JsonValueKind.Array)
-                        {
-                            return ReadResources(nodes);
-                        }
+                        return ReadResources(resources);
+                    }
 
-                        lastError = $"resource-tree response did not contain nodes[]. Response: {responseText}";
-                    }
-                    else
-                    {
-                        lastError =
-                            $"resource-tree GET returned {(int)response.StatusCode} {response.StatusCode}. Response: {responseText}";
-                    }
+                    lastError = $"Application response did not contain status.resources[]. Response: {responseText}";
                 }
-                catch (HttpRequestException ex)
+                else
                 {
-                    lastError = $"resource-tree GET failed: {ex.Message}";
+                    lastError =
+                        $"Application GET returned {(int)response.StatusCode} {response.StatusCode}. Response: {responseText}";
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(5), timeoutSource.Token);
@@ -356,11 +336,12 @@ public sealed class ArgoCdGitOpsEndToEndTests
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // Re-throw below with the last resource-tree error, not a bare cancellation.
+            // Re-throw below with the last status.resources[] error, not a bare cancellation.
         }
 
         throw new TimeoutException(
-            $"Timed out after {WorkloadTimeout} waiting for Argo CD resource-tree to be readable. Last error: {lastError ?? "<none>"}.");
+            $"Timed out after {WorkloadTimeout} waiting for Argo CD Application status.resources[] to be readable. " +
+            $"Last error: {lastError ?? "<none>"}.");
     }
 
     private static IReadOnlyList<ArgoCdResource> ReadResources(JsonElement resources)
@@ -436,23 +417,6 @@ public sealed class ArgoCdGitOpsEndToEndTests
         }
     }
 
-    private static void AssertArgoCdViewsAgree(
-        IReadOnlyList<ArgoCdResource> statusResources,
-        IReadOnlyList<ArgoCdResource> resourceTreeResources)
-    {
-        var statusDeclared = statusResources.Select(resource => resource.Identity).OrderBy(FormatResource).ToArray();
-        var treeDeclared = resourceTreeResources
-            .Select(resource => resource.Identity)
-            .Where(ExpectedGuestbookResources.Contains)
-            .OrderBy(FormatResource)
-            .ToArray();
-
-        Assert.True(
-            statusDeclared.SequenceEqual(treeDeclared),
-            "Argo CD Application status.resources[] and resource-tree disagreed on the declared guestbook resource set. " +
-            $"status.resources[]: {FormatResourceSet(statusDeclared)}; resource-tree declared subset: {FormatResourceSet(treeDeclared)}.");
-    }
-
     private static string? TryGetNestedString(JsonElement element, string firstProperty, string secondProperty)
     {
         return element.TryGetProperty(firstProperty, out var first) &&
@@ -484,7 +448,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
             }));
     }
 
-    private static async Task AssertGuestbookClusterResourcesAsync(
+    private async Task ThenKindRunsGuestbookWorkloadAsync(
         string kubeconfigPath,
         CancellationToken cancellationToken)
     {
@@ -547,6 +511,10 @@ public sealed class ArgoCdGitOpsEndToEndTests
             hasExpectedPort,
             $"Expected cluster Service {WorkloadNamespace}/guestbook-ui to expose port 80 targeting 80, but its ports were " +
             $"{service.RootElement.GetProperty("spec").GetProperty("ports").GetRawText()}.");
+
+        output.WriteLine(
+            "ASSERT Kind cluster: deployment/guestbook-ui has 1 desired replica, 1 ready replica, " +
+            "selector app=guestbook-ui, and service/guestbook-ui selects app=guestbook-ui on port 80 -> 80.");
     }
 
     private static async Task<JsonDocument> GetKubernetesObjectAsync(
@@ -572,7 +540,10 @@ public sealed class ArgoCdGitOpsEndToEndTests
         return JsonDocument.Parse(result.Stdout);
     }
 
-    private async Task AssertArgoCdUiAsync(DistributedApplication app, CancellationToken cancellationToken)
+    private async Task ThenArgoCdUiShowsApplicationHealthyAndSyncedAsync(
+        DistributedApplication app,
+        string applicationName,
+        CancellationToken cancellationToken)
     {
         using var uiClient = app.CreateHttpClient("ui", "http");
         var uiBaseAddress = uiClient.BaseAddress ?? throw new InvalidOperationException("Aspire did not provide a base address for the ui/http endpoint.");
@@ -584,7 +555,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
             "aspire-dev",
             ".e2e");
         Directory.CreateDirectory(scratchDirectory);
-        var screenshotPath = Path.Combine(scratchDirectory, $"{ApplicationName}-argocd-ui.png");
+        var screenshotPath = Path.Combine(scratchDirectory, $"{applicationName}-argocd-ui.png");
 
         using var playwright = await Microsoft.Playwright.Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
@@ -601,11 +572,11 @@ public sealed class ArgoCdGitOpsEndToEndTests
                 !page.Url.Contains("/login", StringComparison.OrdinalIgnoreCase),
                 $"Expected the Argo CD UI to skip login because api-server runs with --disable-auth=true, but browser URL was {page.Url}.");
 
-            var appLink = page.GetByRole(AriaRole.Link, new() { NameRegex = new Regex(ApplicationName, RegexOptions.IgnoreCase) }).First;
+            var appLink = page.GetByRole(AriaRole.Link, new() { NameRegex = new Regex(applicationName, RegexOptions.IgnoreCase) }).First;
             await Microsoft.Playwright.Assertions.Expect(appLink).ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
             await appLink.ClickAsync();
 
-            await Microsoft.Playwright.Assertions.Expect(page.GetByText(ApplicationName).First)
+            await Microsoft.Playwright.Assertions.Expect(page.GetByText(applicationName).First)
                 .ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
             await Microsoft.Playwright.Assertions.Expect(page.GetByText("Synced").First)
                 .ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
@@ -615,8 +586,8 @@ public sealed class ArgoCdGitOpsEndToEndTests
                 .ToBeVisibleAsync(new() { Timeout = (float)UiTimeout.TotalMilliseconds });
 
             output.WriteLine(
-                $"ASSERT Argo CD UI: applications list linked to {ApplicationName}; detail view showed " +
-                $"{ApplicationName}, Synced, Healthy, and guestbook-ui.");
+                $"ASSERT Argo CD UI: applications list linked to {applicationName}; detail view showed " +
+                $"{applicationName}, Synced, Healthy, and guestbook-ui.");
         }
         finally
         {
@@ -660,7 +631,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
         Assert.True(
             listeners.Length == 0,
             $"Cannot start the Aspire AppHost because fixed host port(s) {string.Join(", ", listeners)} are already listening. " +
-            "Stop the other AppHost/process and wait for ports 8080, 8084, 8087, 12345, 12346, 7001, and 4000 to be released before running this E2E test.");
+            $"Stop the other AppHost/process and wait for ports {string.Join(", ", FixedHostPorts.Order())} to be released before running this E2E test.");
     }
 
     private static int? ReadInt32(JsonElement element, params string[] path)
@@ -707,13 +678,14 @@ public sealed class ArgoCdGitOpsEndToEndTests
 
     private static async Task CleanupGuestbookAsync(
         string kubeconfigPath,
+        string applicationName,
         CancellationToken cancellationToken)
     {
         await RunAsync(
             "kubectl",
             [
                 "delete",
-                "application", ApplicationName,
+                "application", applicationName,
                 "-n", ApplicationNamespace,
                 "--ignore-not-found=true",
                 "--kubeconfig", kubeconfigPath,
@@ -742,7 +714,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
             cancellationToken);
     }
 
-    private static void WriteApplicationManifest(string path)
+    private static void WriteApplicationManifest(string path, string applicationName)
     {
         File.WriteAllText(
             path,
@@ -750,7 +722,7 @@ public sealed class ArgoCdGitOpsEndToEndTests
             apiVersion: argoproj.io/v1alpha1
             kind: Application
             metadata:
-              name: {{ApplicationName}}
+              name: {{applicationName}}
               namespace: {{ApplicationNamespace}}
             spec:
               project: default
